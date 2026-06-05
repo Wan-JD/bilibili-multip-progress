@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站多P课程进度助手
 // @namespace    https://github.com/Wan-JD/bilibili-multip-progress
-// @version      1.2.1
+// @version      1.2.2
 // @description  多P视频课程进度追踪：分P列表、账号进度同步、剩余时长估算、一键续看
 // @author       Wan-JD
 // @license      MIT
@@ -200,15 +200,26 @@
   }
 
   function toggleTheme() {
-    const list = document.getElementById('bmpv-list');
-    const scrollTop = list?.scrollTop ?? 0;
     setTheme(uiTheme === 'dark' ? 'light' : 'dark');
-    const content = document.getElementById('bmpv-content');
-    if (pages.length > 1 && content?.classList.contains('bmpv-body')) {
-      renderPanel();
-      const list2 = document.getElementById('bmpv-list');
-      if (list2) list2.scrollTop = scrollTop;
+    refreshAllStatusButtons();
+  }
+
+  function refreshAllStatusButtons() {
+    document.querySelectorAll('#bmpv-list .bmpv-status').forEach((btn) => {
+      const pageNum = Number(btn.dataset.page);
+      if (!pageNum || !bvid) return;
+      const st = getPartStatus(bvid, pageNum);
+      btn.className = `bmpv-status ${st}`;
+      btn.textContent = STATUS_LABEL[st] || STATUS_LABEL[STATUS.UNWATCHED];
+    });
+    const summary = document.querySelector('#bmpv-content .bmpv-summary');
+    if (summary && pages.length > 1) {
+      const done = countCompleted();
+      const remain = sumRemainingSeconds();
+      const syncHint = accountSynced ? ' · 已合并账号记录' : '';
+      summary.innerHTML = `共 <strong>${pages.length}</strong> P · 已完成 <strong>${done}</strong> · 预计剩余 <strong>${formatDuration(remain)}</strong>${syncHint}`;
     }
+    applyTheme();
   }
 
   function applyTheme() {
@@ -287,10 +298,18 @@
   }
 
   function cyclePartStatus(pageNum) {
-    const cur = getPartStatus(bvid, pageNum);
-    const idx = STATUS_CYCLE.indexOf(cur);
-    const next = STATUS_CYCLE[(idx >= 0 ? idx + 1 : 0) % STATUS_CYCLE.length];
-    setPartStatus(bvid, pageNum, next, true, true);
+    if (!bvid) return;
+    const run = () => {
+      const cur = getPartStatus(bvid, pageNum);
+      const idx = STATUS_CYCLE.indexOf(cur);
+      const next = STATUS_CYCLE[(idx >= 0 ? idx + 1 : 0) % STATUS_CYCLE.length];
+      setPartStatus(bvid, pageNum, next, true, true);
+    };
+    if (!storageCache) {
+      ensureStorage().then(run).catch(run);
+      return;
+    }
+    run();
   }
 
   // ─── URL / Page helpers ────────────────────────────────────
@@ -364,14 +383,33 @@
     22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
   ];
 
+  function getVideoReferer() {
+    if (bvid) return `https://www.bilibili.com/video/${bvid}`;
+    const m = location.pathname.match(/\/video\/(BV[a-zA-Z0-9]+)/i);
+    if (m) return `https://www.bilibili.com/video/${m[1]}`;
+    return 'https://www.bilibili.com/';
+  }
+
   function apiFetch(url) {
     return fetch(url, {
       credentials: 'include',
       headers: {
-        Referer: location.href,
-        Origin: location.origin,
+        Referer: getVideoReferer(),
+        Origin: 'https://www.bilibili.com',
       },
     });
+  }
+
+  function extractProgressSeconds(payload) {
+    if (payload == null) return null;
+    if (typeof payload === 'number') return payload;
+    if (typeof payload !== 'object') return null;
+    const keys = ['progress', 'pro', 'played_time', 'play_progress', 'last_play_time', 'time'];
+    for (const k of keys) {
+      if (typeof payload[k] === 'number') return payload[k];
+    }
+    if (payload.data != null) return extractProgressSeconds(payload.data);
+    return null;
   }
 
   function md5Hex(str) {
@@ -549,7 +587,7 @@
       (videoAid && (Number(kid) === Number(videoAid) || Number(h.oid) === Number(videoAid)));
     if (!match) return false;
 
-    const progress = item.progress;
+    const progress = item.progress ?? h.progress;
     if (progress == null || typeof progress !== 'number') return false;
 
     const cid = h.cid;
@@ -592,13 +630,8 @@
     let prevViewAt = -1;
 
     for (let round = 0; round < 25; round++) {
-      const qs = new URLSearchParams({
-        ps: String(ps),
-        max: String(max),
-        view_at: String(viewAt),
-        business: business,
-        type: 'archive',
-      });
+      const qs = new URLSearchParams({ ps: String(ps), max: String(max), view_at: String(viewAt) });
+      if (business) qs.set('business', business);
       const res = await apiFetch(
         `https://api.bilibili.com/x/web-interface/history/cursor?${qs.toString()}`
       );
@@ -651,11 +684,13 @@
         const progress = item.progress;
         if (progress == null || typeof progress !== 'number') continue;
         const pageObj = item.page;
-        if (pageObj?.page > 0) {
-          map.set(pageObj.page, Math.max(map.get(pageObj.page) ?? -1, progress));
+        const pageNum = typeof pageObj === 'number' ? pageObj : pageObj?.page;
+        if (pageNum > 0) {
+          map.set(pageNum, Math.max(map.get(pageNum) ?? -1, progress));
         }
-        if (pageObj?.cid && cidToPage.has(pageObj.cid)) {
-          const p = cidToPage.get(pageObj.cid);
+        const itemCid = pageObj?.cid ?? item.cid;
+        if (itemCid && cidToPage.has(itemCid)) {
+          const p = cidToPage.get(itemCid);
           map.set(p, Math.max(map.get(p) ?? -1, progress));
         }
       }
@@ -664,6 +699,24 @@
     }
 
     return map;
+  }
+
+  async function fetchCidProgressPlayerV2(videoAid, bv, cid) {
+    try {
+      const res = await apiFetch(
+        `https://api.bilibili.com/x/player/v2?aid=${videoAid}&bvid=${encodeURIComponent(bv)}&cid=${cid}`
+      );
+      if (!res.ok) return null;
+      const json = await res.json();
+      if (json.code !== 0 || !json.data) return null;
+      const d = json.data;
+      if (Number(d.cid) !== Number(cid)) return null;
+      if (typeof d.last_play_time === 'number') return d.last_play_time;
+      const nested = extractProgressSeconds(d);
+      return nested;
+    } catch {
+      return null;
+    }
   }
 
   async function fetchCidProgressWbi(videoAid, bv, cid) {
@@ -675,10 +728,9 @@
       });
       if (json.code !== 0 || !json.data) return null;
       const d = json.data;
-      if (d.last_play_cid === cid && typeof d.last_play_time === 'number' && d.last_play_time >= 0) {
-        return d.last_play_time;
-      }
-      const prog = d.played_time ?? d.view_info?.progress ?? d.progress;
+      if (Number(d.cid) !== Number(cid)) return null;
+      if (typeof d.last_play_time === 'number') return d.last_play_time;
+      const prog = extractProgressSeconds(d);
       if (typeof prog === 'number') return prog;
       return null;
     } catch {
@@ -686,16 +738,27 @@
     }
   }
 
-  async function fetchCidProgressLegacy(videoAid, cid) {
+  async function fetchCidProgressLegacy(videoAid, bv, cid) {
+    const qs = new URLSearchParams({
+      aid: String(videoAid),
+      cid: String(cid),
+      bvid: bv,
+    });
     const res = await apiFetch(
-      `https://api.bilibili.com/x/click-interface/web/history?aid=${videoAid}&cid=${cid}`
+      `https://api.bilibili.com/x/click-interface/web/history?${qs.toString()}`
     );
     if (!res.ok) return null;
     const json = await res.json();
     if (json.code !== 0 || json.data == null) return null;
-    if (typeof json.data.progress === 'number') return json.data.progress;
-    if (typeof json.data === 'number') return json.data;
-    return null;
+    return extractProgressSeconds(json.data);
+  }
+
+  async function fetchCidProgressAll(videoAid, bv, cid) {
+    const legacy = await fetchCidProgressLegacy(videoAid, bv, cid);
+    if (legacy != null) return legacy;
+    const v2 = await fetchCidProgressPlayerV2(videoAid, bv, cid);
+    if (v2 != null) return v2;
+    return fetchCidProgressWbi(videoAid, bv, cid);
   }
 
   async function runPool(items, limit, worker) {
@@ -728,12 +791,12 @@
 
     mergeProgressMaps(progressMap, await fetchV2HistoryProgressMap(bv, videoAid, cidToPage));
 
-    const needCid = pageList.filter((pg) => !progressMap.has(pg.page));
-    await runPool(needCid, 3, async (pg) => {
-      let sec =
-        (await fetchCidProgressWbi(videoAid, bv, pg.cid)) ??
-        (await fetchCidProgressLegacy(videoAid, pg.cid));
-      if (sec != null) progressMap.set(pg.page, Math.max(progressMap.get(pg.page) ?? -1, sec));
+    // 历史列表每个稿件通常只有「最近观看」的一条；各分 P 进度需按 cid 逐个查询
+    await runPool(pageList, 4, async (pg) => {
+      const sec = await fetchCidProgressAll(videoAid, bv, pg.cid);
+      if (sec != null) {
+        progressMap.set(pg.page, Math.max(progressMap.get(pg.page) ?? -1, sec));
+      }
     });
 
     return { progressMap, loggedIn: true, foundAny: progressMap.size > 0 };
@@ -980,7 +1043,8 @@
     #bmpv-panel .bmpv-pdur { font-size: 11px; color: var(--bmpv-dim, #64748b); white-space: nowrap; }
     #bmpv-panel .bmpv-status {
       font-size: 11px; padding: 2px 6px; border-radius: 4px; border: none;
-      white-space: nowrap; position: relative; z-index: 1;
+      white-space: nowrap; position: relative; z-index: 2;
+      cursor: pointer; pointer-events: auto;
     }
     #bmpv-panel .bmpv-status.unwatched {
       background: var(--bmpv-st-unwatched-bg, #334155); color: var(--bmpv-st-unwatched-fg, #94a3b8);
@@ -1033,75 +1097,79 @@
     }
   }
 
-  function wirePanelEvents(fab, panel) {
-    if (!fab.dataset.bmpvFabWired) {
-      fab.dataset.bmpvFabWired = '1';
-      fab.addEventListener('click', (e) => {
-        e.stopPropagation();
-        panelOpen = !panelOpen;
-        panel.classList.toggle('open', panelOpen);
-      });
-    }
+  function installGlobalUiHandlers() {
+    if (window.__bmpvUiHandlersInstalled) return;
+    window.__bmpvUiHandlersInstalled = true;
 
-    if (panel.dataset.bmpvPanelWired !== '3') {
-      panel.dataset.bmpvPanelWired = '3';
-
-      const themeBtn = panel.querySelector('#bmpv-theme-btn');
-      if (themeBtn) themeBtn.replaceWith(themeBtn.cloneNode(true));
-
-      panel.addEventListener(
-        'click',
-        (e) => {
-          const statusBtn = e.target.closest('.bmpv-status');
-          if (statusBtn?.dataset?.page) {
-            e.preventDefault();
-            e.stopPropagation();
-            cyclePartStatus(Number(statusBtn.dataset.page));
-            return;
-          }
-          if (e.target.closest('#bmpv-sync')) {
-            e.preventDefault();
-            e.stopPropagation();
-            runAccountSync().catch(() => {});
-            return;
-          }
-          if (e.target.closest('#bmpv-continue')) {
-            e.preventDefault();
-            e.stopPropagation();
-            onContinueClick();
-            return;
-          }
-          if (e.target.closest('#bmpv-theme-btn')) {
-            e.preventDefault();
-            e.stopPropagation();
-            toggleTheme();
-            return;
-          }
-          if (e.target.closest('#bmpv-close')) {
-            e.preventDefault();
-            e.stopPropagation();
-            panelOpen = false;
-            panel.classList.remove('open');
-          }
-        },
-        true
-      );
-
-      panel.addEventListener(
-        'wheel',
-        (e) => {
-          const list = e.target.closest('.bmpv-list');
-          if (!list) return;
-          const { scrollTop, scrollHeight, clientHeight } = list;
-          const delta = e.deltaY;
-          const atTop = scrollTop <= 0;
-          const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
-          if ((delta < 0 && atTop) || (delta > 0 && atBottom)) return;
+    document.addEventListener(
+      'click',
+      (e) => {
+        if (e.target.closest('#bmpv-fab')) {
+          e.preventDefault();
           e.stopPropagation();
-        },
-        { passive: true }
-      );
-    }
+          const panel = document.getElementById('bmpv-panel');
+          if (!panel) return;
+          panelOpen = !panelOpen;
+          panel.classList.toggle('open', panelOpen);
+          return;
+        }
+
+        const panel = e.target.closest('#bmpv-panel');
+        if (!panel) return;
+
+        const statusBtn = e.target.closest('.bmpv-status');
+        if (statusBtn?.dataset?.page) {
+          e.preventDefault();
+          e.stopPropagation();
+          cyclePartStatus(Number(statusBtn.dataset.page));
+          return;
+        }
+        if (e.target.closest('#bmpv-sync')) {
+          e.preventDefault();
+          e.stopPropagation();
+          runAccountSync().catch(() => {});
+          return;
+        }
+        if (e.target.closest('#bmpv-continue')) {
+          e.preventDefault();
+          e.stopPropagation();
+          onContinueClick();
+          return;
+        }
+        if (e.target.closest('#bmpv-theme-btn')) {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleTheme();
+          return;
+        }
+        if (e.target.closest('#bmpv-close')) {
+          e.preventDefault();
+          e.stopPropagation();
+          panelOpen = false;
+          panel.classList.remove('open');
+        }
+      },
+      true
+    );
+
+    document.addEventListener(
+      'wheel',
+      (e) => {
+        const list = e.target.closest('#bmpv-panel .bmpv-list');
+        if (!list) return;
+        const { scrollTop, scrollHeight, clientHeight } = list;
+        const delta = e.deltaY;
+        const atTop = scrollTop <= 0;
+        const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
+        if ((delta < 0 && atTop) || (delta > 0 && atBottom)) return;
+        e.stopPropagation();
+      },
+      { passive: true, capture: true }
+    );
+  }
+
+  function wirePanelEvents() {
+    installGlobalUiHandlers();
   }
 
   function ensureUI() {
@@ -1134,15 +1202,13 @@
       upgradePanelHeader(panel);
     }
 
-    wirePanelEvents(fab, panel);
+    wirePanelEvents();
     applyTheme();
   }
 
   function hideUI() {
     const fab = document.getElementById('bmpv-fab');
     const panel = document.getElementById('bmpv-panel');
-    if (fab) delete fab.dataset.bmpvFabWired;
-    if (panel) delete panel.dataset.bmpvPanelWired;
     fab?.remove();
     panel?.remove();
     panelOpen = false;
@@ -1334,6 +1400,7 @@
   }
 
   function bootstrap() {
+    installGlobalUiHandlers();
     const start = () => {
       init().catch(() => {});
       watchNavigation();
