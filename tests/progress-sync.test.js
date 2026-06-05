@@ -12,6 +12,7 @@ function loadHelpers() {
     `
   globalThis.__bmpvTestExports = {
     extractCidScopedProgress,
+    accountProgressStatus,
     normalizeProgressValue,
     pickProgressValue,
     progressToStatus,
@@ -113,4 +114,16 @@ test('progress values convert to expected statuses', () => {
   assert.equal(helpers.progressToStatus(10, 100), 'in_progress');
   assert.equal(helpers.progressToStatus(90, 100), 'completed');
   assert.equal(helpers.progressToStatus(-1, 100), 'completed');
+});
+
+test('account sync treats missing non-manual pages as unwatched after finding account evidence', () => {
+  const progressMap = new Map([
+    [1, -1],
+    [3, 120],
+  ]);
+
+  assert.equal(helpers.accountProgressStatus(progressMap, 1, 100), 'completed');
+  assert.equal(helpers.accountProgressStatus(progressMap, 2, 100, true), 'unwatched');
+  assert.equal(helpers.accountProgressStatus(progressMap, 3, 200, true), 'in_progress');
+  assert.equal(helpers.accountProgressStatus(progressMap, 4, 100, false), null);
 });

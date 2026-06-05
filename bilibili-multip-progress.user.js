@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站多P课程进度助手
 // @namespace    https://github.com/Wan-JD/bilibili-multip-progress
-// @version      1.2.3
+// @version      1.2.4
 // @description  多P视频课程进度追踪：分P列表、账号进度同步、剩余时长估算、一键续看
 // @author       Wan-JD
 // @license      MIT
@@ -33,12 +33,6 @@
     [STATUS.COMPLETED]: '已完成',
   };
   const STATUS_CYCLE = [STATUS.UNWATCHED, STATUS.IN_PROGRESS, STATUS.COMPLETED];
-  const STATUS_RANK = {
-    [STATUS.UNWATCHED]: 0,
-    [STATUS.IN_PROGRESS]: 1,
-    [STATUS.COMPLETED]: 2,
-  };
-
   let storageCache = null;
   let manualCache = null;
   let uiTheme = 'dark';
@@ -286,10 +280,6 @@
     }
   }
 
-  function pickStatus(a, b) {
-    return STATUS_RANK[a] >= STATUS_RANK[b] ? a : b;
-  }
-
   function normalizeProgressValue(progress, allowCompleteSentinel = false) {
     if (typeof progress !== 'number' || Number.isNaN(progress)) return null;
     if (progress === -1) return allowCompleteSentinel ? -1 : null;
@@ -315,6 +305,11 @@
     if (duration > 0 && progress >= duration * COMPLETE_RATIO) return STATUS.COMPLETED;
     if (progress > 3) return STATUS.IN_PROGRESS;
     return STATUS.UNWATCHED;
+  }
+
+  function accountProgressStatus(progressMap, page, duration, foundAny) {
+    if (progressMap.has(page)) return progressToStatus(progressMap.get(page), duration);
+    return foundAny ? STATUS.UNWATCHED : null;
   }
 
   function cyclePartStatus(pageNum) {
@@ -856,14 +851,11 @@
     for (const pg of pageList) {
       if (isManualMark(bv, pg.page)) continue;
 
-      const progress = progressMap.get(pg.page);
-      if (progress == null) continue;
-
-      const serverSt = progressToStatus(progress, pg.duration);
+      const serverSt = accountProgressStatus(progressMap, pg.page, pg.duration, foundAny);
+      if (serverSt == null) continue;
       const localSt = local[String(pg.page)] || STATUS.UNWATCHED;
-      const merged = pickStatus(localSt, serverSt);
-      if (merged !== localSt) {
-        local[String(pg.page)] = merged;
+      if (serverSt !== localSt) {
+        local[String(pg.page)] = serverSt;
         changed = true;
       }
     }
