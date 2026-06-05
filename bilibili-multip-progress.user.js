@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         B站多P课程进度助手
 // @namespace    https://github.com/Wan-JD/bilibili-multip-progress
-// @version      1.2.6
+// @version      1.2.7
 // @description  多P视频课程进度追踪：分P列表、账号进度同步、剩余时长估算、一键续看
-// @author       Wan-JD
+// @author       Wan-JD, Zhu Xiongkai
 // @license      MIT
 // @homepageURL  https://github.com/Wan-JD/bilibili-multip-progress
 // @supportURL   https://github.com/Wan-JD/bilibili-multip-progress/issues
@@ -25,7 +25,7 @@
   const STORAGE_KEY = 'bilibili_multip_progress';
   const MANUAL_STORAGE_KEY = 'bilibili_multip_progress_manual';
   const THEME_KEY = 'bilibili_multip_progress_theme';
-  const SCRIPT_VERSION = '1.2.6';
+  const SCRIPT_VERSION = '1.2.7';
   const COMPLETE_RATIO = 0.9;
   const STATUS = { UNWATCHED: 'unwatched', IN_PROGRESS: 'in_progress', COMPLETED: 'completed' };
   const STATUS_LABEL = {
@@ -33,7 +33,6 @@
     [STATUS.IN_PROGRESS]: '进行中',
     [STATUS.COMPLETED]: '已完成',
   };
-  const STATUS_CYCLE = [STATUS.UNWATCHED, STATUS.IN_PROGRESS, STATUS.COMPLETED];
   let storageCache = null;
   let manualCache = null;
   let uiTheme = 'dark';
@@ -164,9 +163,18 @@
     return storageCache;
   }
 
+  function persistValue(key, value) {
+    try {
+      const result = GM_setValue(key, value);
+      if (result && typeof result.catch === 'function') result.catch(() => {});
+    } catch {
+      // Ignore storage write errors so UI interaction can still update immediately.
+    }
+  }
+
   function persistStorage() {
-    GM_setValue(STORAGE_KEY, storageCache).catch(() => {});
-    GM_setValue(MANUAL_STORAGE_KEY, manualCache).catch(() => {});
+    persistValue(STORAGE_KEY, storageCache);
+    persistValue(MANUAL_STORAGE_KEY, manualCache);
   }
 
   function isManualMark(bv, pageNum) {
@@ -190,7 +198,7 @@
 
   function setTheme(theme) {
     uiTheme = theme === 'light' ? 'light' : 'dark';
-    GM_setValue(THEME_KEY, uiTheme).catch(() => {});
+    persistValue(THEME_KEY, uiTheme);
     applyTheme();
   }
 
@@ -318,8 +326,7 @@
     if (!bvid) return;
     const run = () => {
       const cur = getPartStatus(bvid, pageNum);
-      const idx = STATUS_CYCLE.indexOf(cur);
-      const next = STATUS_CYCLE[(idx >= 0 ? idx + 1 : 0) % STATUS_CYCLE.length];
+      const next = cur === STATUS.COMPLETED ? STATUS.UNWATCHED : STATUS.COMPLETED;
       setPartStatus(bvid, pageNum, next, true, true);
     };
     if (!storageCache) {
