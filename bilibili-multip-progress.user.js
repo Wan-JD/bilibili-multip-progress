@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站多P课程进度助手
 // @namespace    https://github.com/Wan-JD/bilibili-multip-progress
-// @version      1.2.0
+// @version      1.2.1
 // @description  多P视频课程进度追踪：分P列表、账号进度同步、剩余时长估算、一键续看
 // @author       Wan-JD
 // @license      MIT
@@ -109,6 +109,22 @@
     },
   };
 
+  function normalizeBvid(bv) {
+    if (!bv) return bv;
+    const m = String(bv).match(/^(bv)(.+)$/i);
+    return m ? `BV${m[2]}` : bv;
+  }
+
+  function migrateBvidKeys(store) {
+    if (!store || typeof store !== 'object') return;
+    for (const key of Object.keys(store)) {
+      const nk = normalizeBvid(key);
+      if (!nk || nk === key) continue;
+      store[nk] = { ...(store[nk] || {}), ...(store[key] || {}) };
+      delete store[key];
+    }
+  }
+
   // ─── Storage (Tampermonkey; survives clearing B站 site data) ─
 
   async function ensureStorage() {
@@ -146,6 +162,8 @@
       }
     }
     manualCache = manual && typeof manual === 'object' ? manual : {};
+    migrateBvidKeys(storageCache);
+    migrateBvidKeys(manualCache);
 
     await GM_setValue(STORAGE_KEY, storageCache);
     return storageCache;
@@ -157,14 +175,16 @@
   }
 
   function isManualMark(bv, pageNum) {
-    return !!(manualCache?.[bv]?.[String(pageNum)]);
+    const key = normalizeBvid(bv) || bv;
+    return !!(manualCache?.[key]?.[String(pageNum)]);
   }
 
   function setManualMark(bv, pageNum, on) {
+    const key = normalizeBvid(bv) || bv;
     if (!manualCache) manualCache = {};
-    if (!manualCache[bv]) manualCache[bv] = {};
-    if (on) manualCache[bv][String(pageNum)] = true;
-    else delete manualCache[bv][String(pageNum)];
+    if (!manualCache[key]) manualCache[key] = {};
+    if (on) manualCache[key][String(pageNum)] = true;
+    else delete manualCache[key][String(pageNum)];
   }
 
   async function loadTheme() {
@@ -217,21 +237,41 @@
   }
 
   function getProgress(bv) {
+    const key = normalizeBvid(bv) || bv;
     if (!storageCache) storageCache = {};
-    if (!storageCache[bv]) storageCache[bv] = {};
-    return storageCache[bv];
+    if (!storageCache[key]) storageCache[key] = {};
+    return storageCache[key];
   }
 
   function getPartStatus(bv, pageNum) {
     return getProgress(bv)[String(pageNum)] || STATUS.UNWATCHED;
   }
 
-  function setPartStatus(bv, pageNum, status, manual = false) {
+  function setPartStatus(bv, pageNum, status, manual = false, lightUpdate = false) {
     getProgress(bv)[String(pageNum)] = status;
     if (manual) setManualMark(bv, pageNum, true);
     persistStorage();
-    renderPanel();
+    if (lightUpdate) refreshStatusUi(pageNum);
+    else renderPanel();
     updateFabBadge();
+  }
+
+  function refreshStatusUi(pageNum) {
+    const btn = document.querySelector(`#bmpv-list .bmpv-status[data-page="${pageNum}"]`);
+    if (!btn) {
+      renderPanel();
+      return;
+    }
+    const st = getPartStatus(bvid, pageNum);
+    btn.className = `bmpv-status ${st}`;
+    btn.textContent = STATUS_LABEL[st] || STATUS_LABEL[STATUS.UNWATCHED];
+    const summary = document.querySelector('#bmpv-content .bmpv-summary');
+    if (summary && pages.length > 1) {
+      const done = countCompleted();
+      const remain = sumRemainingSeconds();
+      const syncHint = accountSynced ? ' · 已合并账号记录' : '';
+      summary.innerHTML = `共 <strong>${pages.length}</strong> P · 已完成 <strong>${done}</strong> · 预计剩余 <strong>${formatDuration(remain)}</strong>${syncHint}`;
+    }
   }
 
   function pickStatus(a, b) {
@@ -249,8 +289,8 @@
   function cyclePartStatus(pageNum) {
     const cur = getPartStatus(bvid, pageNum);
     const idx = STATUS_CYCLE.indexOf(cur);
-    const next = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length];
-    setPartStatus(bvid, pageNum, next, true);
+    const next = STATUS_CYCLE[(idx >= 0 ? idx + 1 : 0) % STATUS_CYCLE.length];
+    setPartStatus(bvid, pageNum, next, true, true);
   }
 
   // ─── URL / Page helpers ────────────────────────────────────
@@ -272,6 +312,10 @@
       /* ignore */
     }
     return null;
+  }
+
+  function normalizeExtractedBvid(bv) {
+    return bv ? normalizeBvid(bv) : null;
   }
 
   function getCurrentPageFromUrl() {
@@ -763,14 +807,16 @@
 
   function markCurrentInProgress() {
     if (!bvid || !pages.length) return;
+    if (isManualMark(bvid, currentPage)) return;
     const st = getPartStatus(bvid, currentPage);
     if (st === STATUS.COMPLETED) return;
-    if (st !== STATUS.IN_PROGRESS) setPartStatus(bvid, currentPage, STATUS.IN_PROGRESS);
+    if (st !== STATUS.IN_PROGRESS) setPartStatus(bvid, currentPage, STATUS.IN_PROGRESS, false, true);
   }
 
   function markCurrentCompleted() {
     if (!bvid) return;
-    setPartStatus(bvid, currentPage, STATUS.COMPLETED);
+    if (isManualMark(bvid, currentPage)) return;
+    setPartStatus(bvid, currentPage, STATUS.COMPLETED, false, true);
   }
 
   function onVideoTimeUpdate() {
@@ -997,8 +1043,8 @@
       });
     }
 
-    if (panel.dataset.bmpvPanelWired !== '2') {
-      panel.dataset.bmpvPanelWired = '2';
+    if (panel.dataset.bmpvPanelWired !== '3') {
+      panel.dataset.bmpvPanelWired = '3';
 
       const themeBtn = panel.querySelector('#bmpv-theme-btn');
       if (themeBtn) themeBtn.replaceWith(themeBtn.cloneNode(true));
@@ -1006,6 +1052,25 @@
       panel.addEventListener(
         'click',
         (e) => {
+          const statusBtn = e.target.closest('.bmpv-status');
+          if (statusBtn?.dataset?.page) {
+            e.preventDefault();
+            e.stopPropagation();
+            cyclePartStatus(Number(statusBtn.dataset.page));
+            return;
+          }
+          if (e.target.closest('#bmpv-sync')) {
+            e.preventDefault();
+            e.stopPropagation();
+            runAccountSync().catch(() => {});
+            return;
+          }
+          if (e.target.closest('#bmpv-continue')) {
+            e.preventDefault();
+            e.stopPropagation();
+            onContinueClick();
+            return;
+          }
           if (e.target.closest('#bmpv-theme-btn')) {
             e.preventDefault();
             e.stopPropagation();
@@ -1083,6 +1148,20 @@
     panelOpen = false;
   }
 
+  function onContinueClick() {
+    const target = firstIncompletePage();
+    if (!target) return;
+    if (target === currentPage) {
+      const video = findVideo();
+      if (video) {
+        video.currentTime = 0;
+        video.play().catch(() => {});
+      }
+      return;
+    }
+    location.href = partUrl(target);
+  }
+
   function updateFabBadge() {
     const badge = document.getElementById('bmpv-badge');
     if (!badge || !pages.length) return;
@@ -1146,37 +1225,8 @@
       row.querySelector('.bmpv-ptitle').addEventListener('click', () => {
         if (pg.page !== currentPage) location.href = partUrl(pg.page);
       });
-      const statusBtn = row.querySelector('.bmpv-status');
-      statusBtn.addEventListener(
-        'click',
-        (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          e.stopImmediatePropagation();
-          cyclePartStatus(pg.page);
-        },
-        true
-      );
       list.appendChild(row);
     }
-
-    document.getElementById('bmpv-sync')?.addEventListener('click', () => {
-      runAccountSync().catch(() => {});
-    });
-
-    document.getElementById('bmpv-continue')?.addEventListener('click', () => {
-      const target = firstIncompletePage();
-      if (!target) return;
-      if (target === currentPage) {
-        const video = findVideo();
-        if (video) {
-          video.currentTime = 0;
-          video.play().catch(() => {});
-        }
-        return;
-      }
-      location.href = partUrl(target);
-    });
 
     updateFabBadge();
     applyTheme();
@@ -1196,7 +1246,7 @@
     await ensureStorage();
     await loadTheme();
 
-    const bv = extractBvid();
+    const bv = normalizeExtractedBvid(extractBvid());
     if (!bv) {
       hideUI();
       stopVideoWatch();
@@ -1212,7 +1262,7 @@
     }
 
     lastHref = location.href;
-    bvid = bv;
+    bvid = normalizeExtractedBvid(bv);
     aid = null;
     accountSynced = false;
     currentPage = getCurrentPageFromUrl();
