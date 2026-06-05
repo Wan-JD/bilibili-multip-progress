@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站多P课程进度助手
 // @namespace    https://github.com/Wan-JD/bilibili-multip-progress
-// @version      1.1.0
+// @version      1.1.1
 // @description  多P视频课程进度追踪：分P列表、账号进度同步、剩余时长估算、一键续看
 // @author       Wan-JD
 // @license      MIT
@@ -23,6 +23,7 @@
   'use strict';
 
   const STORAGE_KEY = 'bilibili_multip_progress';
+  const THEME_KEY = 'bilibili_multip_progress_theme';
   const COMPLETE_RATIO = 0.9;
   const STATUS = { UNWATCHED: 'unwatched', IN_PROGRESS: 'in_progress', COMPLETED: 'completed' };
   const STATUS_LABEL = {
@@ -38,6 +39,7 @@
   };
 
   let storageCache = null;
+  let uiTheme = 'dark';
   let bvid = null;
   let aid = null;
   let pages = [];
@@ -83,6 +85,34 @@
 
   function persistStorage() {
     GM_setValue(STORAGE_KEY, storageCache).catch(() => {});
+  }
+
+  async function loadTheme() {
+    const saved = await GM_getValue(THEME_KEY, 'dark');
+    uiTheme = saved === 'light' ? 'light' : 'dark';
+    applyTheme();
+  }
+
+  function setTheme(theme) {
+    uiTheme = theme === 'light' ? 'light' : 'dark';
+    GM_setValue(THEME_KEY, uiTheme).catch(() => {});
+    applyTheme();
+  }
+
+  function toggleTheme() {
+    setTheme(uiTheme === 'dark' ? 'light' : 'dark');
+  }
+
+  function applyTheme() {
+    const panel = document.getElementById('bmpv-panel');
+    const fab = document.getElementById('bmpv-fab');
+    if (panel) panel.dataset.theme = uiTheme;
+    if (fab) fab.dataset.theme = uiTheme;
+    const btn = document.getElementById('bmpv-theme-btn');
+    if (btn) {
+      btn.textContent = uiTheme === 'dark' ? '明' : '暗';
+      btn.title = uiTheme === 'dark' ? '切换为浅色' : '切换为深色';
+    }
   }
 
   function getProgress(bv) {
@@ -395,12 +425,15 @@
       padding: 12px 14px; border-bottom: 1px solid #334155;
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
     }
-    .bmpv-hdr-title { font-weight: 600; font-size: 14px; }
-    .bmpv-hdr-close {
+    .bmpv-hdr-title { font-weight: 600; font-size: 14px; flex: 1; min-width: 0; }
+    .bmpv-hdr-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .bmpv-hdr-btn, .bmpv-hdr-close {
       background: #1e293b; border: none; color: #94a3b8;
-      width: 28px; height: 28px; border-radius: 6px; font-size: 16px;
+      height: 28px; border-radius: 6px; font-size: 13px; line-height: 28px; padding: 0;
     }
-    .bmpv-hdr-close:hover { background: #334155; color: #e2e8f0; }
+    .bmpv-hdr-btn { width: 28px; }
+    .bmpv-hdr-close { width: 28px; font-size: 16px; }
+    .bmpv-hdr-btn:hover, .bmpv-hdr-close:hover { background: #334155; color: #e2e8f0; }
     .bmpv-summary {
       flex-shrink: 0;
       padding: 10px 14px; background: #1e293b; border-bottom: 1px solid #334155;
@@ -474,6 +507,65 @@
     .bmpv-foot a:hover { text-decoration: underline; }
     .bmpv-empty { padding: 20px 14px; text-align: center; color: #64748b; font-size: 12px; }
     .bmpv-loading { padding: 20px 14px; text-align: center; color: #94a3b8; font-size: 12px; }
+
+    #bmpv-panel[data-theme="light"] {
+      background: #fff; color: #18191c;
+      box-shadow: 0 12px 40px rgba(0,0,0,.12);
+    }
+    #bmpv-panel[data-theme="light"] .bmpv-hdr { border-bottom-color: #e3e5e7; }
+    #bmpv-panel[data-theme="light"] .bmpv-hdr-btn,
+    #bmpv-panel[data-theme="light"] .bmpv-hdr-close {
+      background: #f1f2f3; color: #61666d;
+    }
+    #bmpv-panel[data-theme="light"] .bmpv-hdr-btn:hover,
+    #bmpv-panel[data-theme="light"] .bmpv-hdr-close:hover {
+      background: #e3e5e7; color: #18191c;
+    }
+    #bmpv-panel[data-theme="light"] .bmpv-summary {
+      background: #f6f7f8; border-bottom-color: #e3e5e7; color: #61666d;
+    }
+    #bmpv-panel[data-theme="light"] .bmpv-summary strong { color: #18191c; }
+    #bmpv-panel[data-theme="light"] .bmpv-actions { border-bottom-color: #e3e5e7; }
+    #bmpv-panel[data-theme="light"] .bmpv-btn {
+      background: #f1f2f3; color: #18191c;
+    }
+    #bmpv-panel[data-theme="light"] .bmpv-btn:hover { background: #e3e5e7; }
+    #bmpv-panel[data-theme="light"] .bmpv-row:hover { background: #f6f7f8; }
+    #bmpv-panel[data-theme="light"] .bmpv-row.current {
+      background: #e8f3ff; outline-color: #00a1d6;
+    }
+    #bmpv-panel[data-theme="light"] .bmpv-ptitle { color: #18191c; }
+    #bmpv-panel[data-theme="light"] .bmpv-pdur { color: #9499a0; }
+    #bmpv-panel[data-theme="light"] .bmpv-status.unwatched {
+      background: #e3e5e7; color: #61666d;
+    }
+    #bmpv-panel[data-theme="light"] .bmpv-status.in_progress {
+      background: #d6ebff; color: #0066cc;
+    }
+    #bmpv-panel[data-theme="light"] .bmpv-status.completed {
+      background: #d9f2e5; color: #1a7f4b;
+    }
+    #bmpv-panel[data-theme="light"] .bmpv-foot {
+      border-top-color: #e3e5e7; color: #9499a0;
+    }
+    #bmpv-panel[data-theme="light"] .bmpv-foot a { color: #00a1d6; }
+    #bmpv-panel[data-theme="light"] .bmpv-empty,
+    #bmpv-panel[data-theme="light"] .bmpv-loading { color: #9499a0; }
+    #bmpv-panel[data-theme="light"] .bmpv-list {
+      scrollbar-color: rgba(148, 153, 160, 0.45) transparent;
+    }
+    #bmpv-panel[data-theme="light"] .bmpv-list::-webkit-scrollbar-thumb {
+      background: rgba(148, 153, 160, 0.35);
+    }
+    #bmpv-panel[data-theme="light"] .bmpv-list:hover::-webkit-scrollbar-thumb {
+      background: rgba(148, 153, 160, 0.55);
+    }
+    #bmpv-panel[data-theme="light"] .bmpv-list::-webkit-scrollbar-thumb:active {
+      background: rgba(97, 102, 109, 0.65);
+    }
+    #bmpv-fab[data-theme="light"] {
+      box-shadow: 0 4px 14px rgba(251,114,153,.35);
+    }
   `);
 
   function ensureUI() {
@@ -494,13 +586,19 @@
     panel.innerHTML = `
       <div class="bmpv-hdr">
         <span class="bmpv-hdr-title">多P课程进度</span>
-        <button type="button" class="bmpv-hdr-close" id="bmpv-close" title="收起">×</button>
+        <div class="bmpv-hdr-actions">
+          <button type="button" class="bmpv-hdr-btn" id="bmpv-theme-btn" title="切换为浅色">明</button>
+          <button type="button" class="bmpv-hdr-close" id="bmpv-close" title="收起">×</button>
+        </div>
       </div>
       <div id="bmpv-content" class="bmpv-loading">加载中…</div>
     `;
 
     document.body.appendChild(fab);
     document.body.appendChild(panel);
+
+    document.getElementById('bmpv-theme-btn').addEventListener('click', toggleTheme);
+    applyTheme();
 
     document.getElementById('bmpv-close').addEventListener('click', () => {
       panelOpen = false;
@@ -625,6 +723,7 @@
 
   async function init() {
     await ensureStorage();
+    await loadTheme();
 
     const bv = extractBvid();
     if (!bv) {
