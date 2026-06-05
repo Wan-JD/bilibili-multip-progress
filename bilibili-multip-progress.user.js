@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站多P课程进度助手
 // @namespace    https://github.com/Wan-JD/bilibili-multip-progress
-// @version      1.1.2
+// @version      1.1.3
 // @description  多P视频课程进度追踪：分P列表、账号进度同步、剩余时长估算、一键续看
 // @author       Wan-JD
 // @license      MIT
@@ -52,6 +52,59 @@
   let lastHref = location.href;
   const syncedBvids = new Set();
 
+  const THEME_PALETTE = {
+    dark: {
+      '--bmpv-bg': '#0f172a',
+      '--bmpv-text': '#e2e8f0',
+      '--bmpv-border': '#334155',
+      '--bmpv-surface': '#1e293b',
+      '--bmpv-surface-hover': '#334155',
+      '--bmpv-muted': '#94a3b8',
+      '--bmpv-strong': '#f8fafc',
+      '--bmpv-dim': '#64748b',
+      '--bmpv-row-hover': '#1e293b',
+      '--bmpv-row-current-bg': '#172554',
+      '--bmpv-row-current-outline': '#3b82f6',
+      '--bmpv-scroll-track': 'rgba(51, 65, 85, 0.55)',
+      '--bmpv-scroll-thumb': 'rgba(51, 65, 85, 0.45)',
+      '--bmpv-scroll-thumb-hover': 'rgba(71, 85, 105, 0.7)',
+      '--bmpv-scroll-thumb-active': 'rgba(100, 116, 139, 0.85)',
+      '--bmpv-st-unwatched-bg': '#334155',
+      '--bmpv-st-unwatched-fg': '#94a3b8',
+      '--bmpv-st-progress-bg': '#1e3a5f',
+      '--bmpv-st-progress-fg': '#7dd3fc',
+      '--bmpv-st-done-bg': '#14532d',
+      '--bmpv-st-done-fg': '#86efac',
+      '--bmpv-link': '#7dd3fc',
+      '--bmpv-shadow': 'rgba(0,0,0,.4)',
+    },
+    light: {
+      '--bmpv-bg': '#ffffff',
+      '--bmpv-text': '#18191c',
+      '--bmpv-border': '#e3e5e7',
+      '--bmpv-surface': '#f1f2f3',
+      '--bmpv-surface-hover': '#e3e5e7',
+      '--bmpv-muted': '#61666d',
+      '--bmpv-strong': '#18191c',
+      '--bmpv-dim': '#9499a0',
+      '--bmpv-row-hover': '#f6f7f8',
+      '--bmpv-row-current-bg': '#e8f3ff',
+      '--bmpv-row-current-outline': '#00a1d6',
+      '--bmpv-scroll-track': 'rgba(148, 153, 160, 0.45)',
+      '--bmpv-scroll-thumb': 'rgba(148, 153, 160, 0.35)',
+      '--bmpv-scroll-thumb-hover': 'rgba(148, 153, 160, 0.55)',
+      '--bmpv-scroll-thumb-active': 'rgba(97, 102, 109, 0.65)',
+      '--bmpv-st-unwatched-bg': '#e3e5e7',
+      '--bmpv-st-unwatched-fg': '#61666d',
+      '--bmpv-st-progress-bg': '#d6ebff',
+      '--bmpv-st-progress-fg': '#0066cc',
+      '--bmpv-st-done-bg': '#d9f2e5',
+      '--bmpv-st-done-fg': '#1a7f4b',
+      '--bmpv-link': '#00a1d6',
+      '--bmpv-shadow': 'rgba(0,0,0,.12)',
+    },
+  };
+
   // ─── Storage (Tampermonkey; survives clearing B站 site data) ─
 
   async function ensureStorage() {
@@ -100,20 +153,36 @@
   }
 
   function toggleTheme() {
+    const list = document.getElementById('bmpv-list');
+    const scrollTop = list?.scrollTop ?? 0;
     setTheme(uiTheme === 'dark' ? 'light' : 'dark');
+    const content = document.getElementById('bmpv-content');
+    if (pages.length > 1 && content?.classList.contains('bmpv-body')) {
+      renderPanel();
+      const list2 = document.getElementById('bmpv-list');
+      if (list2) list2.scrollTop = scrollTop;
+    }
   }
 
   function applyTheme() {
     const panel = document.getElementById('bmpv-panel');
     const fab = document.getElementById('bmpv-fab');
     const isLight = uiTheme === 'light';
+    const palette = isLight ? THEME_PALETTE.light : THEME_PALETTE.dark;
+
     if (panel) {
       panel.dataset.theme = uiTheme;
-      panel.classList.toggle('bmpv-theme-light', isLight);
-      panel.classList.toggle('bmpv-theme-dark', !isLight);
+      for (const [key, value] of Object.entries(palette)) {
+        panel.style.setProperty(key, value);
+      }
     }
-    if (fab) fab.dataset.theme = uiTheme;
-    const btn = document.getElementById('bmpv-theme-btn');
+    if (fab) {
+      fab.dataset.theme = uiTheme;
+      fab.style.boxShadow = isLight
+        ? '0 4px 14px rgba(251,114,153,.35)'
+        : '0 4px 16px rgba(251,114,153,.45)';
+    }
+    const btn = panel?.querySelector('#bmpv-theme-btn');
     if (btn) {
       btn.textContent = isLight ? '暗' : '明';
       btn.title = isLight ? '切换为深色' : '切换为浅色';
@@ -420,186 +489,120 @@
       transform: translateY(-50%);
       width: min(380px, calc(100vw - 90px)); height: min(78vh, 640px);
       display: none; flex-direction: column;
-      background: #0f172a; color: #e2e8f0; border-radius: 12px;
-      box-shadow: 0 12px 40px rgba(0,0,0,.4);
+      background: var(--bmpv-bg, #0f172a);
+      color: var(--bmpv-text, #e2e8f0);
+      border-radius: 12px;
+      box-shadow: 0 12px 40px var(--bmpv-shadow, rgba(0,0,0,.4));
       font: 13px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
       overflow: hidden; min-height: 0;
+      transition: background-color .2s ease, color .2s ease, box-shadow .2s ease;
     }
     #bmpv-panel.open { display: flex; }
-    .bmpv-hdr {
-      padding: 12px 14px; border-bottom: 1px solid #334155;
+    #bmpv-panel .bmpv-hdr {
+      padding: 12px 14px; border-bottom: 1px solid var(--bmpv-border, #334155);
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
     }
-    .bmpv-hdr-title { font-weight: 600; font-size: 14px; flex: 1; min-width: 0; }
-    .bmpv-hdr-actions {
+    #bmpv-panel .bmpv-hdr-title { font-weight: 600; font-size: 14px; flex: 1; min-width: 0; }
+    #bmpv-panel .bmpv-hdr-actions {
       display: flex; align-items: center; gap: 6px; flex-shrink: 0;
       position: relative; z-index: 2;
     }
-    .bmpv-hdr-btn, .bmpv-hdr-close {
-      background: #1e293b; border: none; color: #94a3b8;
+    #bmpv-panel .bmpv-hdr-btn,
+    #bmpv-panel .bmpv-hdr-close {
+      background: var(--bmpv-surface, #1e293b); border: none;
+      color: var(--bmpv-muted, #94a3b8);
       height: 28px; border-radius: 6px; font-size: 13px; line-height: 28px; padding: 0;
     }
-    .bmpv-hdr-btn { width: 28px; }
-    .bmpv-hdr-close { width: 28px; font-size: 16px; }
-    .bmpv-hdr-btn:hover, .bmpv-hdr-close:hover { background: #334155; color: #e2e8f0; }
-    .bmpv-summary {
-      flex-shrink: 0;
-      padding: 10px 14px; background: #1e293b; border-bottom: 1px solid #334155;
-      font-size: 12px; color: #94a3b8;
+    #bmpv-panel .bmpv-hdr-btn { width: 28px; }
+    #bmpv-panel .bmpv-hdr-close { width: 28px; font-size: 16px; }
+    #bmpv-panel .bmpv-hdr-btn:hover,
+    #bmpv-panel .bmpv-hdr-close:hover {
+      background: var(--bmpv-surface-hover, #334155); color: var(--bmpv-text, #e2e8f0);
     }
-    .bmpv-summary strong { color: #f8fafc; }
-    .bmpv-actions { flex-shrink: 0; padding: 8px 14px; border-bottom: 1px solid #334155; }
-    .bmpv-btn {
+    #bmpv-panel .bmpv-summary {
+      flex-shrink: 0;
+      padding: 10px 14px; background: var(--bmpv-surface, #1e293b);
+      border-bottom: 1px solid var(--bmpv-border, #334155);
+      font-size: 12px; color: var(--bmpv-muted, #94a3b8);
+    }
+    #bmpv-panel .bmpv-summary strong { color: var(--bmpv-strong, #f8fafc); }
+    #bmpv-panel .bmpv-actions {
+      flex-shrink: 0; padding: 8px 14px;
+      border-bottom: 1px solid var(--bmpv-border, #334155);
+    }
+    #bmpv-panel .bmpv-btn {
       display: block; width: 100%; margin: 4px 0; padding: 8px 10px;
       border: none; border-radius: 8px; font-size: 13px;
-      background: #1e293b; color: #e2e8f0; text-align: center;
+      background: var(--bmpv-surface, #1e293b); color: var(--bmpv-text, #e2e8f0); text-align: center;
     }
-    .bmpv-btn:hover { background: #334155; }
-    .bmpv-btn.primary { background: #2563eb; color: #fff; }
-    .bmpv-btn.primary:hover { background: #1d4ed8; }
-    .bmpv-body {
+    #bmpv-panel .bmpv-btn:hover { background: var(--bmpv-surface-hover, #334155); }
+    #bmpv-panel .bmpv-btn.primary { background: #2563eb; color: #fff; }
+    #bmpv-panel .bmpv-btn.primary:hover { background: #1d4ed8; }
+    #bmpv-panel .bmpv-body {
       flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
     }
-    .bmpv-list {
+    #bmpv-panel .bmpv-list {
       flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
       padding: 6px 6px 10px 8px; overscroll-behavior: contain;
       -webkit-overflow-scrolling: touch;
       scrollbar-width: thin;
-      scrollbar-color: rgba(51, 65, 85, 0.55) transparent;
+      scrollbar-color: var(--bmpv-scroll-track, rgba(51,65,85,.55)) transparent;
     }
-    .bmpv-list::-webkit-scrollbar {
-      width: 3px;
+    #bmpv-panel .bmpv-list::-webkit-scrollbar { width: 3px; }
+    #bmpv-panel .bmpv-list::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
+    #bmpv-panel .bmpv-list::-webkit-scrollbar-thumb {
+      background: var(--bmpv-scroll-thumb, rgba(51,65,85,.45));
+      border-radius: 999px; transition: background 0.2s ease;
     }
-    .bmpv-list::-webkit-scrollbar-track {
-      background: transparent;
-      margin: 4px 0;
+    #bmpv-panel .bmpv-list:hover::-webkit-scrollbar-thumb {
+      background: var(--bmpv-scroll-thumb-hover, rgba(71,85,105,.7));
     }
-    .bmpv-list::-webkit-scrollbar-thumb {
-      background: rgba(51, 65, 85, 0.45);
-      border-radius: 999px;
-      transition: background 0.2s ease;
+    #bmpv-panel .bmpv-list::-webkit-scrollbar-thumb:active {
+      background: var(--bmpv-scroll-thumb-active, rgba(100,116,139,.85));
     }
-    .bmpv-list:hover::-webkit-scrollbar-thumb {
-      background: rgba(71, 85, 105, 0.7);
-    }
-    .bmpv-list::-webkit-scrollbar-thumb:active {
-      background: rgba(100, 116, 139, 0.85);
-    }
-    .bmpv-row {
+    #bmpv-panel .bmpv-row {
       display: grid; grid-template-columns: 36px 1fr auto auto;
       gap: 6px; align-items: center;
       padding: 8px 6px; border-radius: 8px; margin-bottom: 2px;
     }
-    .bmpv-row:hover { background: #1e293b; }
-    .bmpv-row.current { background: #172554; outline: 1px solid #3b82f6; }
-    .bmpv-pnum { font-weight: 600; color: #fb7299; font-size: 12px; text-align: center; }
-    .bmpv-ptitle {
-      font-size: 12px; color: #e2e8f0; overflow: hidden;
+    #bmpv-panel .bmpv-row:hover { background: var(--bmpv-row-hover, #1e293b); }
+    #bmpv-panel .bmpv-row.current {
+      background: var(--bmpv-row-current-bg, #172554);
+      outline: 1px solid var(--bmpv-row-current-outline, #3b82f6);
+    }
+    #bmpv-panel .bmpv-pnum { font-weight: 600; color: #fb7299; font-size: 12px; text-align: center; }
+    #bmpv-panel .bmpv-ptitle {
+      font-size: 12px; color: var(--bmpv-text, #e2e8f0); overflow: hidden;
       text-overflow: ellipsis; white-space: nowrap;
     }
-    .bmpv-pdur { font-size: 11px; color: #64748b; white-space: nowrap; }
-    .bmpv-status {
+    #bmpv-panel .bmpv-pdur { font-size: 11px; color: var(--bmpv-dim, #64748b); white-space: nowrap; }
+    #bmpv-panel .bmpv-status {
       font-size: 11px; padding: 2px 6px; border-radius: 4px; border: none;
       white-space: nowrap;
     }
-    .bmpv-status.unwatched { background: #334155; color: #94a3b8; }
-    .bmpv-status.in_progress { background: #1e3a5f; color: #7dd3fc; }
-    .bmpv-status.completed { background: #14532d; color: #86efac; }
-    .bmpv-status:hover { filter: brightness(1.1); }
-    .bmpv-foot {
+    #bmpv-panel .bmpv-status.unwatched {
+      background: var(--bmpv-st-unwatched-bg, #334155); color: var(--bmpv-st-unwatched-fg, #94a3b8);
+    }
+    #bmpv-panel .bmpv-status.in_progress {
+      background: var(--bmpv-st-progress-bg, #1e3a5f); color: var(--bmpv-st-progress-fg, #7dd3fc);
+    }
+    #bmpv-panel .bmpv-status.completed {
+      background: var(--bmpv-st-done-bg, #14532d); color: var(--bmpv-st-done-fg, #86efac);
+    }
+    #bmpv-panel .bmpv-status:hover { filter: brightness(1.08); }
+    #bmpv-panel .bmpv-foot {
       flex-shrink: 0;
-      padding: 8px 14px 10px; border-top: 1px solid #334155;
-      text-align: center; font-size: 11px; color: #64748b;
+      padding: 8px 14px 10px; border-top: 1px solid var(--bmpv-border, #334155);
+      text-align: center; font-size: 11px; color: var(--bmpv-dim, #64748b);
     }
-    .bmpv-foot a { color: #7dd3fc; text-decoration: none; }
-    .bmpv-foot a:hover { text-decoration: underline; }
-    .bmpv-empty { padding: 20px 14px; text-align: center; color: #64748b; font-size: 12px; }
-    .bmpv-loading { padding: 20px 14px; text-align: center; color: #94a3b8; font-size: 12px; }
-
-    #bmpv-panel.bmpv-theme-light,
-    #bmpv-panel[data-theme="light"] {
-      background: #fff !important; color: #18191c !important;
-      box-shadow: 0 12px 40px rgba(0,0,0,.12);
+    #bmpv-panel .bmpv-foot a { color: var(--bmpv-link, #7dd3fc); text-decoration: none; }
+    #bmpv-panel .bmpv-foot a:hover { text-decoration: underline; }
+    #bmpv-panel .bmpv-empty,
+    #bmpv-panel .bmpv-loading {
+      padding: 20px 14px; text-align: center;
+      color: var(--bmpv-dim, #64748b); font-size: 12px;
     }
-    #bmpv-panel.bmpv-theme-light .bmpv-hdr,
-    #bmpv-panel[data-theme="light"] .bmpv-hdr { border-bottom-color: #e3e5e7; }
-    #bmpv-panel.bmpv-theme-light .bmpv-hdr-btn,
-    #bmpv-panel.bmpv-theme-light .bmpv-hdr-close,
-    #bmpv-panel[data-theme="light"] .bmpv-hdr-btn,
-    #bmpv-panel[data-theme="light"] .bmpv-hdr-close {
-      background: #f1f2f3; color: #61666d;
-    }
-    #bmpv-panel.bmpv-theme-light .bmpv-hdr-btn:hover,
-    #bmpv-panel.bmpv-theme-light .bmpv-hdr-close:hover,
-    #bmpv-panel[data-theme="light"] .bmpv-hdr-btn:hover,
-    #bmpv-panel[data-theme="light"] .bmpv-hdr-close:hover {
-      background: #e3e5e7; color: #18191c;
-    }
-    #bmpv-panel.bmpv-theme-light .bmpv-summary,
-    #bmpv-panel[data-theme="light"] .bmpv-summary {
-      background: #f6f7f8; border-bottom-color: #e3e5e7; color: #61666d;
-    }
-    #bmpv-panel.bmpv-theme-light .bmpv-summary strong,
-    #bmpv-panel[data-theme="light"] .bmpv-summary strong { color: #18191c; }
-    #bmpv-panel.bmpv-theme-light .bmpv-actions,
-    #bmpv-panel[data-theme="light"] .bmpv-actions { border-bottom-color: #e3e5e7; }
-    #bmpv-panel.bmpv-theme-light .bmpv-btn,
-    #bmpv-panel[data-theme="light"] .bmpv-btn {
-      background: #f1f2f3; color: #18191c;
-    }
-    #bmpv-panel.bmpv-theme-light .bmpv-btn:hover,
-    #bmpv-panel[data-theme="light"] .bmpv-btn:hover { background: #e3e5e7; }
-    #bmpv-panel.bmpv-theme-light .bmpv-row:hover,
-    #bmpv-panel[data-theme="light"] .bmpv-row:hover { background: #f6f7f8; }
-    #bmpv-panel.bmpv-theme-light .bmpv-row.current,
-    #bmpv-panel[data-theme="light"] .bmpv-row.current {
-      background: #e8f3ff; outline-color: #00a1d6;
-    }
-    #bmpv-panel.bmpv-theme-light .bmpv-ptitle,
-    #bmpv-panel[data-theme="light"] .bmpv-ptitle { color: #18191c; }
-    #bmpv-panel.bmpv-theme-light .bmpv-pdur,
-    #bmpv-panel[data-theme="light"] .bmpv-pdur { color: #9499a0; }
-    #bmpv-panel.bmpv-theme-light .bmpv-status.unwatched,
-    #bmpv-panel[data-theme="light"] .bmpv-status.unwatched {
-      background: #e3e5e7; color: #61666d;
-    }
-    #bmpv-panel.bmpv-theme-light .bmpv-status.in_progress,
-    #bmpv-panel[data-theme="light"] .bmpv-status.in_progress {
-      background: #d6ebff; color: #0066cc;
-    }
-    #bmpv-panel.bmpv-theme-light .bmpv-status.completed,
-    #bmpv-panel[data-theme="light"] .bmpv-status.completed {
-      background: #d9f2e5; color: #1a7f4b;
-    }
-    #bmpv-panel.bmpv-theme-light .bmpv-foot,
-    #bmpv-panel[data-theme="light"] .bmpv-foot {
-      border-top-color: #e3e5e7; color: #9499a0;
-    }
-    #bmpv-panel.bmpv-theme-light .bmpv-foot a,
-    #bmpv-panel[data-theme="light"] .bmpv-foot a { color: #00a1d6; }
-    #bmpv-panel.bmpv-theme-light .bmpv-empty,
-    #bmpv-panel.bmpv-theme-light .bmpv-loading,
-    #bmpv-panel[data-theme="light"] .bmpv-empty,
-    #bmpv-panel[data-theme="light"] .bmpv-loading { color: #9499a0; }
-    #bmpv-panel.bmpv-theme-light .bmpv-list,
-    #bmpv-panel[data-theme="light"] .bmpv-list {
-      scrollbar-color: rgba(148, 153, 160, 0.45) transparent;
-    }
-    #bmpv-panel.bmpv-theme-light .bmpv-list::-webkit-scrollbar-thumb,
-    #bmpv-panel[data-theme="light"] .bmpv-list::-webkit-scrollbar-thumb {
-      background: rgba(148, 153, 160, 0.35);
-    }
-    #bmpv-panel.bmpv-theme-light .bmpv-list:hover::-webkit-scrollbar-thumb,
-    #bmpv-panel[data-theme="light"] .bmpv-list:hover::-webkit-scrollbar-thumb {
-      background: rgba(148, 153, 160, 0.55);
-    }
-    #bmpv-panel.bmpv-theme-light .bmpv-list::-webkit-scrollbar-thumb:active,
-    #bmpv-panel[data-theme="light"] .bmpv-list::-webkit-scrollbar-thumb:active {
-      background: rgba(97, 102, 109, 0.65);
-    }
-    #bmpv-fab[data-theme="light"] {
-      box-shadow: 0 4px 14px rgba(251,114,153,.35);
-    }
+    #bmpv-panel .bmpv-loading { color: var(--bmpv-muted, #94a3b8); }
   `);
 
   function upgradePanelHeader(panel) {
@@ -747,6 +750,7 @@
       content.className = 'bmpv-empty';
       content.innerHTML = '当前视频仅 1 P，无需追踪多P进度。';
       updateFabBadge();
+      applyTheme();
       return;
     }
 
@@ -806,6 +810,7 @@
     });
 
     updateFabBadge();
+    applyTheme();
   }
 
   function escapeHtml(str) {
@@ -832,6 +837,7 @@
     if (bv === bvid && location.href === lastHref && pages.length) {
       currentPage = getCurrentPageFromUrl();
       renderPanel();
+      applyTheme();
       attachVideo();
       return;
     }
