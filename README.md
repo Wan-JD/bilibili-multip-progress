@@ -49,6 +49,11 @@
 
 [MIT](LICENSE)
 
+## 贡献者
+
+- [Wan-JD](https://github.com/Wan-JD)
+- [Zhu Xiongkai](https://github.com/zhuxiongkai)
+
 ## 支持作者
 
 如果这个脚本对你有帮助，可以在 [爱发电](https://ifdian.net/a/jd0512) 支持一下作者。

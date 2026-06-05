@@ -74,10 +74,10 @@ A：请确认当前页面是多P视频（视频信息中有多个分P）。单P�
 A：进度存在油猴扩展里，清除 B 站网站数据通常不影响。卸载扩展或换浏览器会丢；登录同一 B 站账号后打开视频，可再次从观看记录拉回一部分。
 
 **Q：装脚本前的进度能恢复吗？**  
-A：登录状态下看过过的分 P 大多能同步；从未点开过的分 P、未登录观看的无法恢复。
+A：登录状态下看过的分 P 大多能同步；从未点开过的分 P、未登录观看的无法恢复。
 
 **Q：自动标记不准确？**  
-A：可点击每行状态按钮手动修正。部分页面切换分P时可能需要刷新。
+A：可点击每行状态按钮手动修正；再次点击可取消完成状态。
 
 **Q：需要登录吗？**  
 A：获取分P列表使用 B 站公开 API，登录状态下体验更稳定。
@@ -98,7 +98,7 @@ A：获取分P列表使用 B 站公开 API，登录状态下体验更稳定。
 ## 建议填写的 Greasy Fork 元数据检查清单
 
 - [x] `// @license MIT`
-- [x] `// @author Wan-JD`
+- [x] `// @author Wan-JD, Zhu Xiongkai`
 - [x] `// @namespace https://github.com/Wan-JD/bilibili-multip-progress`
 - [x] `// @homepageURL` / `@supportURL` / `@updateURL` / `@downloadURL`
 - [x] `// @contributionURL` → https://ifdian.net/a/jd0512
