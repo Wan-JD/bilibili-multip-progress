@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站多P课程进度助手
 // @namespace    https://github.com/Wan-JD/bilibili-multip-progress
-// @version      1.2.4
+// @version      1.2.5
 // @description  多P视频课程进度追踪：分P列表、账号进度同步、剩余时长估算、一键续看
 // @author       Wan-JD
 // @license      MIT
@@ -25,6 +25,7 @@
   const STORAGE_KEY = 'bilibili_multip_progress';
   const MANUAL_STORAGE_KEY = 'bilibili_multip_progress_manual';
   const THEME_KEY = 'bilibili_multip_progress_theme';
+  const SCRIPT_VERSION = '1.2.5';
   const COMPLETE_RATIO = 0.9;
   const STATUS = { UNWATCHED: 'unwatched', IN_PROGRESS: 'in_progress', COMPLETED: 'completed' };
   const STATUS_LABEL = {
@@ -225,12 +226,14 @@
 
     if (panel) {
       panel.dataset.theme = uiTheme;
+      panel.dataset.version = SCRIPT_VERSION;
       for (const [key, value] of Object.entries(palette)) {
         panel.style.setProperty(key, value);
       }
     }
     if (fab) {
       fab.dataset.theme = uiTheme;
+      fab.dataset.version = SCRIPT_VERSION;
       fab.style.boxShadow = isLight
         ? '0 4px 14px rgba(251,114,153,.35)'
         : '0 4px 16px rgba(251,114,153,.45)';
@@ -1196,6 +1199,22 @@
     return false;
   }
 
+  function bindDirectUiHandlers(root = document) {
+    const selectors = ['#bmpv-fab', '#bmpv-theme-btn', '#bmpv-close', '#bmpv-sync', '#bmpv-continue', '.bmpv-status'];
+    root.querySelectorAll?.(selectors.join(',')).forEach((el) => {
+      if (el.dataset.bmpvDirectWired === '1') return;
+      el.dataset.bmpvDirectWired = '1';
+      el.addEventListener('pointerdown', handleUiCommand, true);
+      el.addEventListener('click', handleUiCommand, true);
+    });
+    const fab = document.getElementById('bmpv-fab');
+    if (fab && fab.dataset.bmpvDirectWired !== '1') {
+      fab.dataset.bmpvDirectWired = '1';
+      fab.addEventListener('pointerdown', handleUiCommand, true);
+      fab.addEventListener('click', handleUiCommand, true);
+    }
+  }
+
   function installGlobalUiHandlers() {
     if (window.__bmpvUiHandlersInstalled) return;
     window.__bmpvUiHandlersInstalled = true;
@@ -1230,6 +1249,7 @@
 
   function wirePanelEvents() {
     installGlobalUiHandlers();
+    bindDirectUiHandlers();
   }
 
   function ensureUI() {
@@ -1333,7 +1353,7 @@
       </div>
       <div class="bmpv-list" id="bmpv-list"></div>
       <div class="bmpv-foot">
-        <a href="https://ifdian.net/a/jd0512" target="_blank" rel="noopener">支持作者</a>
+        <span>v${SCRIPT_VERSION}</span> · <a href="https://ifdian.net/a/jd0512" target="_blank" rel="noopener">支持作者</a>
       </div>
     `;
 
@@ -1356,6 +1376,7 @@
 
     updateFabBadge();
     applyTheme();
+    bindDirectUiHandlers(content);
   }
 
   function escapeHtml(str) {
