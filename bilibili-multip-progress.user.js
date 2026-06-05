@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站多P课程进度助手
 // @namespace    https://github.com/Wan-JD/bilibili-multip-progress
-// @version      1.0.0
+// @version      1.0.1
 // @description  多P视频课程进度追踪：分P列表、完成状态、剩余时长估算、一键续看
 // @author       Wan-JD
 // @license      MIT
@@ -246,12 +246,12 @@
     #bmpv-panel {
       position: fixed; right: 68px; top: 50%; z-index: 2147483646;
       transform: translateY(-50%);
-      width: min(380px, calc(100vw - 90px)); max-height: 78vh;
+      width: min(380px, calc(100vw - 90px)); height: min(78vh, 640px);
       display: none; flex-direction: column;
       background: #0f172a; color: #e2e8f0; border-radius: 12px;
       box-shadow: 0 12px 40px rgba(0,0,0,.4);
       font: 13px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-      overflow: hidden;
+      overflow: hidden; min-height: 0;
     }
     #bmpv-panel.open { display: flex; }
     .bmpv-hdr {
@@ -265,11 +265,12 @@
     }
     .bmpv-hdr-close:hover { background: #334155; color: #e2e8f0; }
     .bmpv-summary {
+      flex-shrink: 0;
       padding: 10px 14px; background: #1e293b; border-bottom: 1px solid #334155;
       font-size: 12px; color: #94a3b8;
     }
     .bmpv-summary strong { color: #f8fafc; }
-    .bmpv-actions { padding: 8px 14px; border-bottom: 1px solid #334155; }
+    .bmpv-actions { flex-shrink: 0; padding: 8px 14px; border-bottom: 1px solid #334155; }
     .bmpv-btn {
       display: block; width: 100%; margin: 4px 0; padding: 8px 10px;
       border: none; border-radius: 8px; font-size: 13px;
@@ -278,8 +279,13 @@
     .bmpv-btn:hover { background: #334155; }
     .bmpv-btn.primary { background: #2563eb; color: #fff; }
     .bmpv-btn.primary:hover { background: #1d4ed8; }
+    .bmpv-body {
+      flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+    }
     .bmpv-list {
-      flex: 1; overflow-y: auto; padding: 6px 8px 10px;
+      flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+      padding: 6px 8px 10px; overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
     }
     .bmpv-row {
       display: grid; grid-template-columns: 36px 1fr auto auto;
@@ -303,6 +309,7 @@
     .bmpv-status.completed { background: #14532d; color: #86efac; }
     .bmpv-status:hover { filter: brightness(1.1); }
     .bmpv-foot {
+      flex-shrink: 0;
       padding: 8px 14px 10px; border-top: 1px solid #334155;
       text-align: center; font-size: 11px; color: #64748b;
     }
@@ -342,6 +349,21 @@
       panelOpen = false;
       panel.classList.remove('open');
     });
+
+    panel.addEventListener(
+      'wheel',
+      (e) => {
+        const list = e.target.closest('.bmpv-list');
+        if (!list) return;
+        const { scrollTop, scrollHeight, clientHeight } = list;
+        const delta = e.deltaY;
+        const atTop = scrollTop <= 0;
+        const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
+        if ((delta < 0 && atTop) || (delta > 0 && atBottom)) return;
+        e.stopPropagation();
+      },
+      { passive: true }
+    );
   }
 
   function hideUI() {
@@ -379,7 +401,7 @@
     const done = countCompleted();
     const remain = sumRemainingSeconds();
 
-    content.className = '';
+    content.className = 'bmpv-body';
     content.innerHTML = `
       <div class="bmpv-summary">
         共 <strong>${pages.length}</strong> P · 已完成 <strong>${done}</strong> ·
