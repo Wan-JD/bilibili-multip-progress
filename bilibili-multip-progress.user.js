@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站多P课程进度助手
 // @namespace    https://github.com/Wan-JD/bilibili-multip-progress
-// @version      1.2.2
+// @version      1.2.3
 // @description  多P视频课程进度追踪：分P列表、账号进度同步、剩余时长估算、一键续看
 // @author       Wan-JD
 // @license      MIT
@@ -54,6 +54,7 @@
   let attachedVideo = null;
   let pollTimer = null;
   let lastHref = location.href;
+  let lastUiPointerHandledAt = 0;
   const syncedBvids = new Set();
 
   const THEME_PALETTE = {
@@ -289,6 +290,25 @@
     return STATUS_RANK[a] >= STATUS_RANK[b] ? a : b;
   }
 
+  function normalizeProgressValue(progress, allowCompleteSentinel = false) {
+    if (typeof progress !== 'number' || Number.isNaN(progress)) return null;
+    if (progress === -1) return allowCompleteSentinel ? -1 : null;
+    if (progress >= 0) return progress;
+    return null;
+  }
+
+  function pickProgressValue(a, b) {
+    if (a === -1 || b === -1) return -1;
+    if (a == null) return b;
+    if (b == null) return a;
+    return Math.max(a, b);
+  }
+
+  function setProgressMapValue(map, pageNum, progress) {
+    if (!(pageNum > 0) || progress == null) return;
+    map.set(pageNum, pickProgressValue(map.get(pageNum), progress));
+  }
+
   function progressToStatus(progress, duration) {
     if (progress == null) return STATUS.UNWATCHED;
     if (progress === -1) return STATUS.COMPLETED;
@@ -400,15 +420,16 @@
     });
   }
 
-  function extractProgressSeconds(payload) {
+  function extractProgressSeconds(payload, allowCompleteSentinel = false) {
     if (payload == null) return null;
-    if (typeof payload === 'number') return payload;
+    if (typeof payload === 'number') return normalizeProgressValue(payload, allowCompleteSentinel);
     if (typeof payload !== 'object') return null;
     const keys = ['progress', 'pro', 'played_time', 'play_progress', 'last_play_time', 'time'];
     for (const k of keys) {
-      if (typeof payload[k] === 'number') return payload[k];
+      const value = normalizeProgressValue(payload[k], allowCompleteSentinel);
+      if (value != null) return value;
     }
-    if (payload.data != null) return extractProgressSeconds(payload.data);
+    if (payload.data != null) return extractProgressSeconds(payload.data, allowCompleteSentinel);
     return null;
   }
 
@@ -587,17 +608,17 @@
       (videoAid && (Number(kid) === Number(videoAid) || Number(h.oid) === Number(videoAid)));
     if (!match) return false;
 
-    const progress = item.progress ?? h.progress;
-    if (progress == null || typeof progress !== 'number') return false;
+    const progress = extractProgressSeconds({ progress: item.progress ?? h.progress }, true);
+    if (progress == null) return false;
 
     const cid = h.cid;
     if (cid && cidToPage.has(cid)) {
       const p = cidToPage.get(cid);
-      map.set(p, Math.max(map.get(p) ?? -1, progress));
+      setProgressMapValue(map, p, progress);
     }
     const pageNum = h.page;
     if (pageNum > 0) {
-      map.set(pageNum, Math.max(map.get(pageNum) ?? -1, progress));
+      setProgressMapValue(map, pageNum, progress);
     }
     return true;
   }
@@ -630,7 +651,12 @@
     let prevViewAt = -1;
 
     for (let round = 0; round < 25; round++) {
-      const qs = new URLSearchParams({ ps: String(ps), max: String(max), view_at: String(viewAt) });
+      const qs = new URLSearchParams({
+        ps: String(ps),
+        max: String(max),
+        view_at: String(viewAt),
+        type: 'archive',
+      });
       if (business) qs.set('business', business);
       const res = await apiFetch(
         `https://api.bilibili.com/x/web-interface/history/cursor?${qs.toString()}`
@@ -681,17 +707,17 @@
       for (const item of list) {
         const itemBvid = String(item.bvid || '').toUpperCase();
         if (itemBvid !== bvUpper && Number(item.aid) !== Number(videoAid)) continue;
-        const progress = item.progress;
-        if (progress == null || typeof progress !== 'number') continue;
+        const progress = extractProgressSeconds({ progress: item.progress }, true);
+        if (progress == null) continue;
         const pageObj = item.page;
         const pageNum = typeof pageObj === 'number' ? pageObj : pageObj?.page;
         if (pageNum > 0) {
-          map.set(pageNum, Math.max(map.get(pageNum) ?? -1, progress));
+          setProgressMapValue(map, pageNum, progress);
         }
         const itemCid = pageObj?.cid ?? item.cid;
         if (itemCid && cidToPage.has(itemCid)) {
           const p = cidToPage.get(itemCid);
-          map.set(p, Math.max(map.get(p) ?? -1, progress));
+          setProgressMapValue(map, p, progress);
         }
       }
 
@@ -699,6 +725,27 @@
     }
 
     return map;
+  }
+
+  function extractCidScopedProgress(data, requestedCid) {
+    if (!data || typeof data !== 'object') return null;
+
+    const lastPlayCid = data.last_play_cid ?? data.history?.cid ?? data.view_info?.last_play_cid;
+    if (lastPlayCid != null) {
+      if (Number(lastPlayCid) !== Number(requestedCid)) return null;
+      return extractProgressSeconds({ progress: data.last_play_time ?? data.progress }, true);
+    }
+
+    const watchedCid = data.history?.cid ?? data.view_info?.cid;
+    if (watchedCid != null) {
+      if (Number(watchedCid) !== Number(requestedCid)) return null;
+      return extractProgressSeconds(data, true);
+    }
+
+    const responseCid = data.cid;
+    if (responseCid != null && Number(responseCid) !== Number(requestedCid)) return null;
+
+    return extractProgressSeconds(data, false);
   }
 
   async function fetchCidProgressPlayerV2(videoAid, bv, cid) {
@@ -711,9 +758,7 @@
       if (json.code !== 0 || !json.data) return null;
       const d = json.data;
       if (Number(d.cid) !== Number(cid)) return null;
-      if (typeof d.last_play_time === 'number') return d.last_play_time;
-      const nested = extractProgressSeconds(d);
-      return nested;
+      return extractCidScopedProgress(d, cid);
     } catch {
       return null;
     }
@@ -729,10 +774,7 @@
       if (json.code !== 0 || !json.data) return null;
       const d = json.data;
       if (Number(d.cid) !== Number(cid)) return null;
-      if (typeof d.last_play_time === 'number') return d.last_play_time;
-      const prog = extractProgressSeconds(d);
-      if (typeof prog === 'number') return prog;
-      return null;
+      return extractCidScopedProgress(d, cid);
     } catch {
       return null;
     }
@@ -750,7 +792,7 @@
     if (!res.ok) return null;
     const json = await res.json();
     if (json.code !== 0 || json.data == null) return null;
-    return extractProgressSeconds(json.data);
+    return extractCidScopedProgress(json.data, cid);
   }
 
   async function fetchCidProgressAll(videoAid, bv, cid) {
@@ -775,7 +817,7 @@
 
   function mergeProgressMaps(target, source) {
     for (const [page, sec] of source) {
-      target.set(page, Math.max(target.get(page) ?? -1, sec));
+      setProgressMapValue(target, page, sec);
     }
   }
 
@@ -795,7 +837,7 @@
     await runPool(pageList, 4, async (pg) => {
       const sec = await fetchCidProgressAll(videoAid, bv, pg.cid);
       if (sec != null) {
-        progressMap.set(pg.page, Math.max(progressMap.get(pg.page) ?? -1, sec));
+        setProgressMapValue(progressMap, pg.page, sec);
       }
     });
 
@@ -1097,58 +1139,84 @@
     }
   }
 
+  function closestTarget(target, selector) {
+    if (!target) return null;
+    if (target.closest) return target.closest(selector);
+    return target.parentElement?.closest?.(selector) || null;
+  }
+
+  function handleUiCommand(e) {
+    const isClickFallback = e.type === 'click';
+    const isRecentPointerHandled = Date.now() - lastUiPointerHandledAt < 500;
+
+    const fab = closestTarget(e.target, '#bmpv-fab');
+    const panel = closestTarget(e.target, '#bmpv-panel');
+    if (!fab && !panel) return false;
+
+    const statusBtn = panel ? closestTarget(e.target, '.bmpv-status') : null;
+    const isSync = !!(panel && closestTarget(e.target, '#bmpv-sync'));
+    const isContinue = !!(panel && closestTarget(e.target, '#bmpv-continue'));
+    const isTheme = !!(panel && closestTarget(e.target, '#bmpv-theme-btn'));
+    const isClose = !!(panel && closestTarget(e.target, '#bmpv-close'));
+    const hasCommand = !!fab || !!statusBtn?.dataset?.page || isSync || isContinue || isTheme || isClose;
+    if (!hasCommand) return false;
+
+    if (isClickFallback && isRecentPointerHandled) {
+      e.preventDefault();
+      e.stopPropagation();
+      return true;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === 'pointerdown') lastUiPointerHandledAt = Date.now();
+
+    if (fab) {
+      const p = document.getElementById('bmpv-panel');
+      if (!p) return true;
+      panelOpen = !panelOpen;
+      p.classList.toggle('open', panelOpen);
+      return true;
+    }
+
+    if (statusBtn?.dataset?.page) {
+      cyclePartStatus(Number(statusBtn.dataset.page));
+      return true;
+    }
+    if (isSync) {
+      runAccountSync().catch(() => {});
+      return true;
+    }
+    if (isContinue) {
+      onContinueClick();
+      return true;
+    }
+    if (isTheme) {
+      toggleTheme();
+      return true;
+    }
+    if (isClose) {
+      panelOpen = false;
+      panel.classList.remove('open');
+      return true;
+    }
+
+    return false;
+  }
+
   function installGlobalUiHandlers() {
     if (window.__bmpvUiHandlersInstalled) return;
     window.__bmpvUiHandlersInstalled = true;
 
     document.addEventListener(
+      'pointerdown',
+      handleUiCommand,
+      true
+    );
+
+    document.addEventListener(
       'click',
-      (e) => {
-        if (e.target.closest('#bmpv-fab')) {
-          e.preventDefault();
-          e.stopPropagation();
-          const panel = document.getElementById('bmpv-panel');
-          if (!panel) return;
-          panelOpen = !panelOpen;
-          panel.classList.toggle('open', panelOpen);
-          return;
-        }
-
-        const panel = e.target.closest('#bmpv-panel');
-        if (!panel) return;
-
-        const statusBtn = e.target.closest('.bmpv-status');
-        if (statusBtn?.dataset?.page) {
-          e.preventDefault();
-          e.stopPropagation();
-          cyclePartStatus(Number(statusBtn.dataset.page));
-          return;
-        }
-        if (e.target.closest('#bmpv-sync')) {
-          e.preventDefault();
-          e.stopPropagation();
-          runAccountSync().catch(() => {});
-          return;
-        }
-        if (e.target.closest('#bmpv-continue')) {
-          e.preventDefault();
-          e.stopPropagation();
-          onContinueClick();
-          return;
-        }
-        if (e.target.closest('#bmpv-theme-btn')) {
-          e.preventDefault();
-          e.stopPropagation();
-          toggleTheme();
-          return;
-        }
-        if (e.target.closest('#bmpv-close')) {
-          e.preventDefault();
-          e.stopPropagation();
-          panelOpen = false;
-          panel.classList.remove('open');
-        }
-      },
+      handleUiCommand,
       true
     );
 
