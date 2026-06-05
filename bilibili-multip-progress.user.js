@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站多P课程进度助手
 // @namespace    https://github.com/Wan-JD/bilibili-multip-progress
-// @version      1.1.1
+// @version      1.1.2
 // @description  多P视频课程进度追踪：分P列表、账号进度同步、剩余时长估算、一键续看
 // @author       Wan-JD
 // @license      MIT
@@ -106,12 +106,17 @@
   function applyTheme() {
     const panel = document.getElementById('bmpv-panel');
     const fab = document.getElementById('bmpv-fab');
-    if (panel) panel.dataset.theme = uiTheme;
+    const isLight = uiTheme === 'light';
+    if (panel) {
+      panel.dataset.theme = uiTheme;
+      panel.classList.toggle('bmpv-theme-light', isLight);
+      panel.classList.toggle('bmpv-theme-dark', !isLight);
+    }
     if (fab) fab.dataset.theme = uiTheme;
     const btn = document.getElementById('bmpv-theme-btn');
     if (btn) {
-      btn.textContent = uiTheme === 'dark' ? '明' : '暗';
-      btn.title = uiTheme === 'dark' ? '切换为浅色' : '切换为深色';
+      btn.textContent = isLight ? '暗' : '明';
+      btn.title = isLight ? '切换为深色' : '切换为浅色';
     }
   }
 
@@ -426,7 +431,10 @@
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
     }
     .bmpv-hdr-title { font-weight: 600; font-size: 14px; flex: 1; min-width: 0; }
-    .bmpv-hdr-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .bmpv-hdr-actions {
+      display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+      position: relative; z-index: 2;
+    }
     .bmpv-hdr-btn, .bmpv-hdr-close {
       background: #1e293b; border: none; color: #94a3b8;
       height: 28px; border-radius: 6px; font-size: 13px; line-height: 28px; padding: 0;
@@ -508,58 +516,84 @@
     .bmpv-empty { padding: 20px 14px; text-align: center; color: #64748b; font-size: 12px; }
     .bmpv-loading { padding: 20px 14px; text-align: center; color: #94a3b8; font-size: 12px; }
 
+    #bmpv-panel.bmpv-theme-light,
     #bmpv-panel[data-theme="light"] {
-      background: #fff; color: #18191c;
+      background: #fff !important; color: #18191c !important;
       box-shadow: 0 12px 40px rgba(0,0,0,.12);
     }
+    #bmpv-panel.bmpv-theme-light .bmpv-hdr,
     #bmpv-panel[data-theme="light"] .bmpv-hdr { border-bottom-color: #e3e5e7; }
+    #bmpv-panel.bmpv-theme-light .bmpv-hdr-btn,
+    #bmpv-panel.bmpv-theme-light .bmpv-hdr-close,
     #bmpv-panel[data-theme="light"] .bmpv-hdr-btn,
     #bmpv-panel[data-theme="light"] .bmpv-hdr-close {
       background: #f1f2f3; color: #61666d;
     }
+    #bmpv-panel.bmpv-theme-light .bmpv-hdr-btn:hover,
+    #bmpv-panel.bmpv-theme-light .bmpv-hdr-close:hover,
     #bmpv-panel[data-theme="light"] .bmpv-hdr-btn:hover,
     #bmpv-panel[data-theme="light"] .bmpv-hdr-close:hover {
       background: #e3e5e7; color: #18191c;
     }
+    #bmpv-panel.bmpv-theme-light .bmpv-summary,
     #bmpv-panel[data-theme="light"] .bmpv-summary {
       background: #f6f7f8; border-bottom-color: #e3e5e7; color: #61666d;
     }
+    #bmpv-panel.bmpv-theme-light .bmpv-summary strong,
     #bmpv-panel[data-theme="light"] .bmpv-summary strong { color: #18191c; }
+    #bmpv-panel.bmpv-theme-light .bmpv-actions,
     #bmpv-panel[data-theme="light"] .bmpv-actions { border-bottom-color: #e3e5e7; }
+    #bmpv-panel.bmpv-theme-light .bmpv-btn,
     #bmpv-panel[data-theme="light"] .bmpv-btn {
       background: #f1f2f3; color: #18191c;
     }
+    #bmpv-panel.bmpv-theme-light .bmpv-btn:hover,
     #bmpv-panel[data-theme="light"] .bmpv-btn:hover { background: #e3e5e7; }
+    #bmpv-panel.bmpv-theme-light .bmpv-row:hover,
     #bmpv-panel[data-theme="light"] .bmpv-row:hover { background: #f6f7f8; }
+    #bmpv-panel.bmpv-theme-light .bmpv-row.current,
     #bmpv-panel[data-theme="light"] .bmpv-row.current {
       background: #e8f3ff; outline-color: #00a1d6;
     }
+    #bmpv-panel.bmpv-theme-light .bmpv-ptitle,
     #bmpv-panel[data-theme="light"] .bmpv-ptitle { color: #18191c; }
+    #bmpv-panel.bmpv-theme-light .bmpv-pdur,
     #bmpv-panel[data-theme="light"] .bmpv-pdur { color: #9499a0; }
+    #bmpv-panel.bmpv-theme-light .bmpv-status.unwatched,
     #bmpv-panel[data-theme="light"] .bmpv-status.unwatched {
       background: #e3e5e7; color: #61666d;
     }
+    #bmpv-panel.bmpv-theme-light .bmpv-status.in_progress,
     #bmpv-panel[data-theme="light"] .bmpv-status.in_progress {
       background: #d6ebff; color: #0066cc;
     }
+    #bmpv-panel.bmpv-theme-light .bmpv-status.completed,
     #bmpv-panel[data-theme="light"] .bmpv-status.completed {
       background: #d9f2e5; color: #1a7f4b;
     }
+    #bmpv-panel.bmpv-theme-light .bmpv-foot,
     #bmpv-panel[data-theme="light"] .bmpv-foot {
       border-top-color: #e3e5e7; color: #9499a0;
     }
+    #bmpv-panel.bmpv-theme-light .bmpv-foot a,
     #bmpv-panel[data-theme="light"] .bmpv-foot a { color: #00a1d6; }
+    #bmpv-panel.bmpv-theme-light .bmpv-empty,
+    #bmpv-panel.bmpv-theme-light .bmpv-loading,
     #bmpv-panel[data-theme="light"] .bmpv-empty,
     #bmpv-panel[data-theme="light"] .bmpv-loading { color: #9499a0; }
+    #bmpv-panel.bmpv-theme-light .bmpv-list,
     #bmpv-panel[data-theme="light"] .bmpv-list {
       scrollbar-color: rgba(148, 153, 160, 0.45) transparent;
     }
+    #bmpv-panel.bmpv-theme-light .bmpv-list::-webkit-scrollbar-thumb,
     #bmpv-panel[data-theme="light"] .bmpv-list::-webkit-scrollbar-thumb {
       background: rgba(148, 153, 160, 0.35);
     }
+    #bmpv-panel.bmpv-theme-light .bmpv-list:hover::-webkit-scrollbar-thumb,
     #bmpv-panel[data-theme="light"] .bmpv-list:hover::-webkit-scrollbar-thumb {
       background: rgba(148, 153, 160, 0.55);
     }
+    #bmpv-panel.bmpv-theme-light .bmpv-list::-webkit-scrollbar-thumb:active,
     #bmpv-panel[data-theme="light"] .bmpv-list::-webkit-scrollbar-thumb:active {
       background: rgba(97, 102, 109, 0.65);
     }
@@ -568,62 +602,122 @@
     }
   `);
 
-  function ensureUI() {
-    if (document.getElementById('bmpv-fab')) return;
+  function upgradePanelHeader(panel) {
+    const hdr = panel.querySelector('.bmpv-hdr');
+    if (!hdr) return;
 
-    const fab = document.createElement('button');
-    fab.id = 'bmpv-fab';
-    fab.type = 'button';
-    fab.title = '多P课程进度';
-    fab.innerHTML = 'P<span class="bmpv-badge" id="bmpv-badge" style="display:none"></span>';
-    fab.addEventListener('click', () => {
-      panelOpen = !panelOpen;
-      document.getElementById('bmpv-panel')?.classList.toggle('open', panelOpen);
-    });
+    if (!hdr.querySelector('#bmpv-theme-btn')) {
+      let actions = hdr.querySelector('.bmpv-hdr-actions');
+      const close = hdr.querySelector('#bmpv-close');
+      if (!actions) {
+        actions = document.createElement('div');
+        actions.className = 'bmpv-hdr-actions';
+        if (close) {
+          close.remove();
+          actions.appendChild(close);
+        }
+        hdr.appendChild(actions);
+      }
+      const themeBtn = document.createElement('button');
+      themeBtn.type = 'button';
+      themeBtn.className = 'bmpv-hdr-btn';
+      themeBtn.id = 'bmpv-theme-btn';
+      themeBtn.textContent = '明';
+      themeBtn.title = '切换为浅色';
+      actions.insertBefore(themeBtn, actions.firstChild);
+    }
+  }
 
-    const panel = document.createElement('div');
-    panel.id = 'bmpv-panel';
-    panel.innerHTML = `
-      <div class="bmpv-hdr">
-        <span class="bmpv-hdr-title">多P课程进度</span>
-        <div class="bmpv-hdr-actions">
-          <button type="button" class="bmpv-hdr-btn" id="bmpv-theme-btn" title="切换为浅色">明</button>
-          <button type="button" class="bmpv-hdr-close" id="bmpv-close" title="收起">×</button>
-        </div>
-      </div>
-      <div id="bmpv-content" class="bmpv-loading">加载中…</div>
-    `;
-
-    document.body.appendChild(fab);
-    document.body.appendChild(panel);
-
-    document.getElementById('bmpv-theme-btn').addEventListener('click', toggleTheme);
-    applyTheme();
-
-    document.getElementById('bmpv-close').addEventListener('click', () => {
-      panelOpen = false;
-      panel.classList.remove('open');
-    });
-
-    panel.addEventListener(
-      'wheel',
-      (e) => {
-        const list = e.target.closest('.bmpv-list');
-        if (!list) return;
-        const { scrollTop, scrollHeight, clientHeight } = list;
-        const delta = e.deltaY;
-        const atTop = scrollTop <= 0;
-        const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
-        if ((delta < 0 && atTop) || (delta > 0 && atBottom)) return;
+  function wirePanelEvents(fab, panel) {
+    if (!fab.dataset.bmpvFabWired) {
+      fab.dataset.bmpvFabWired = '1';
+      fab.addEventListener('click', (e) => {
         e.stopPropagation();
-      },
-      { passive: true }
-    );
+        panelOpen = !panelOpen;
+        panel.classList.toggle('open', panelOpen);
+      });
+    }
+
+    if (!panel.dataset.bmpvPanelWired) {
+      panel.dataset.bmpvPanelWired = '1';
+
+      panel.addEventListener(
+        'click',
+        (e) => {
+          if (e.target.closest('#bmpv-theme-btn')) {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleTheme();
+            return;
+          }
+          if (e.target.closest('#bmpv-close')) {
+            e.preventDefault();
+            e.stopPropagation();
+            panelOpen = false;
+            panel.classList.remove('open');
+          }
+        },
+        true
+      );
+
+      panel.addEventListener(
+        'wheel',
+        (e) => {
+          const list = e.target.closest('.bmpv-list');
+          if (!list) return;
+          const { scrollTop, scrollHeight, clientHeight } = list;
+          const delta = e.deltaY;
+          const atTop = scrollTop <= 0;
+          const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
+          if ((delta < 0 && atTop) || (delta > 0 && atBottom)) return;
+          e.stopPropagation();
+        },
+        { passive: true }
+      );
+    }
+  }
+
+  function ensureUI() {
+    let fab = document.getElementById('bmpv-fab');
+    let panel = document.getElementById('bmpv-panel');
+
+    if (!fab || !panel) {
+      fab = document.createElement('button');
+      fab.id = 'bmpv-fab';
+      fab.type = 'button';
+      fab.title = '多P课程进度';
+      fab.innerHTML = 'P<span class="bmpv-badge" id="bmpv-badge" style="display:none"></span>';
+
+      panel = document.createElement('div');
+      panel.id = 'bmpv-panel';
+      panel.innerHTML = `
+        <div class="bmpv-hdr">
+          <span class="bmpv-hdr-title">多P课程进度</span>
+          <div class="bmpv-hdr-actions">
+            <button type="button" class="bmpv-hdr-btn" id="bmpv-theme-btn" title="切换为浅色">明</button>
+            <button type="button" class="bmpv-hdr-close" id="bmpv-close" title="收起">×</button>
+          </div>
+        </div>
+        <div id="bmpv-content" class="bmpv-loading">加载中…</div>
+      `;
+
+      document.body.appendChild(fab);
+      document.body.appendChild(panel);
+    } else {
+      upgradePanelHeader(panel);
+    }
+
+    wirePanelEvents(fab, panel);
+    applyTheme();
   }
 
   function hideUI() {
-    document.getElementById('bmpv-fab')?.remove();
-    document.getElementById('bmpv-panel')?.remove();
+    const fab = document.getElementById('bmpv-fab');
+    const panel = document.getElementById('bmpv-panel');
+    if (fab) delete fab.dataset.bmpvFabWired;
+    if (panel) delete panel.dataset.bmpvPanelWired;
+    fab?.remove();
+    panel?.remove();
     panelOpen = false;
   }
 
