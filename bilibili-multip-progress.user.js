@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站多P课程进度助手
 // @namespace    https://github.com/Wan-JD/bilibili-multip-progress
-// @version      1.1.3
+// @version      1.2.0
 // @description  多P视频课程进度追踪：分P列表、账号进度同步、剩余时长估算、一键续看
 // @author       Wan-JD
 // @license      MIT
@@ -23,6 +23,7 @@
   'use strict';
 
   const STORAGE_KEY = 'bilibili_multip_progress';
+  const MANUAL_STORAGE_KEY = 'bilibili_multip_progress_manual';
   const THEME_KEY = 'bilibili_multip_progress_theme';
   const COMPLETE_RATIO = 0.9;
   const STATUS = { UNWATCHED: 'unwatched', IN_PROGRESS: 'in_progress', COMPLETED: 'completed' };
@@ -39,7 +40,10 @@
   };
 
   let storageCache = null;
+  let manualCache = null;
   let uiTheme = 'dark';
+  let wbiMixinKey = null;
+  let wbiMixinKeyAt = 0;
   let bvid = null;
   let aid = null;
   let pages = [];
@@ -132,12 +136,35 @@
     }
 
     storageCache = data;
+
+    let manual = await GM_getValue(MANUAL_STORAGE_KEY, null);
+    if (typeof manual === 'string') {
+      try {
+        manual = JSON.parse(manual);
+      } catch {
+        manual = {};
+      }
+    }
+    manualCache = manual && typeof manual === 'object' ? manual : {};
+
     await GM_setValue(STORAGE_KEY, storageCache);
     return storageCache;
   }
 
   function persistStorage() {
     GM_setValue(STORAGE_KEY, storageCache).catch(() => {});
+    GM_setValue(MANUAL_STORAGE_KEY, manualCache).catch(() => {});
+  }
+
+  function isManualMark(bv, pageNum) {
+    return !!(manualCache?.[bv]?.[String(pageNum)]);
+  }
+
+  function setManualMark(bv, pageNum, on) {
+    if (!manualCache) manualCache = {};
+    if (!manualCache[bv]) manualCache[bv] = {};
+    if (on) manualCache[bv][String(pageNum)] = true;
+    else delete manualCache[bv][String(pageNum)];
   }
 
   async function loadTheme() {
@@ -199,8 +226,9 @@
     return getProgress(bv)[String(pageNum)] || STATUS.UNWATCHED;
   }
 
-  function setPartStatus(bv, pageNum, status) {
+  function setPartStatus(bv, pageNum, status, manual = false) {
     getProgress(bv)[String(pageNum)] = status;
+    if (manual) setManualMark(bv, pageNum, true);
     persistStorage();
     renderPanel();
     updateFabBadge();
@@ -222,7 +250,7 @@
     const cur = getPartStatus(bvid, pageNum);
     const idx = STATUS_CYCLE.indexOf(cur);
     const next = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length];
-    setPartStatus(bvid, pageNum, next);
+    setPartStatus(bvid, pageNum, next, true);
   }
 
   // ─── URL / Page helpers ────────────────────────────────────
@@ -286,9 +314,215 @@
 
   // ─── API ───────────────────────────────────────────────────
 
+  const MIXIN_KEY_ENC_TAB = [
+    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19,
+    29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
+    22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
+  ];
+
+  function apiFetch(url) {
+    return fetch(url, {
+      credentials: 'include',
+      headers: {
+        Referer: location.href,
+        Origin: location.origin,
+      },
+    });
+  }
+
+  function md5Hex(str) {
+    function rl(n, s) {
+      return (n << s) | (n >>> (32 - s));
+    }
+    function cm(q, a, b, x, s, t) {
+      return (rl((a + q + x + t) | 0, s) + b) | 0;
+    }
+    function ff(a, b, c, d, x, s, t) {
+      return cm((b & c) | (~b & d), a, b, x, s, t);
+    }
+    function gg(a, b, c, d, x, s, t) {
+      return cm((b & d) | (c & ~d), a, b, x, s, t);
+    }
+    function hh(a, b, c, d, x, s, t) {
+      return cm(b ^ c ^ d, a, b, x, s, t);
+    }
+    function ii(a, b, c, d, x, s, t) {
+      return cm(c ^ (b | ~d), a, b, x, s, t);
+    }
+    function md5blk(s) {
+      const md5blks = [];
+      for (let i = 0; i < 64; i += 4) {
+        md5blks[i >> 2] =
+          s.charCodeAt(i) +
+          (s.charCodeAt(i + 1) << 8) +
+          (s.charCodeAt(i + 2) << 16) +
+          (s.charCodeAt(i + 3) << 24);
+      }
+      return md5blks;
+    }
+    function md51(s) {
+      let n = s.length;
+      let state = [1732584193, -271733879, -1732584194, 271733878];
+      let i;
+      for (i = 64; i <= n; i += 64) {
+        md5cycle(state, md5blk(s.substring(i - 64, i)));
+      }
+      s = s.substring(i - 64);
+      const tail = new Array(16).fill(0);
+      for (i = 0; i < s.length; i++) tail[i >> 2] |= s.charCodeAt(i) << ((i % 4) << 3);
+      tail[i >> 2] |= 0x80 << ((i % 4) << 3);
+      if (i > 55) {
+        md5cycle(state, tail);
+        tail.fill(0);
+      }
+      tail[14] = n * 8;
+      md5cycle(state, tail);
+      return state;
+    }
+    function md5cycle(x, k) {
+      let [a, b, c, d] = x;
+      a = ff(a, b, c, d, k[0], 7, -680876936);
+      d = ff(d, a, b, c, k[1], 12, -389564586);
+      c = ff(c, d, a, b, k[2], 17, 606105819);
+      b = ff(b, c, d, a, k[3], 22, -1044525330);
+      a = ff(a, b, c, d, k[4], 7, -176418897);
+      d = ff(d, a, b, c, k[5], 12, 1200080426);
+      c = ff(c, d, a, b, k[6], 17, -1473231341);
+      b = ff(b, c, d, a, k[7], 22, -45705983);
+      a = ff(a, b, c, d, k[8], 7, 1770035416);
+      d = ff(d, a, b, c, k[9], 12, -1958414417);
+      c = ff(c, d, a, b, k[10], 17, -42063);
+      b = ff(b, c, d, a, k[11], 22, -1990404162);
+      a = ff(a, b, c, d, k[12], 7, 1804603682);
+      d = ff(d, a, b, c, k[13], 12, -40341101);
+      c = ff(c, d, a, b, k[14], 17, -1502002290);
+      b = ff(b, c, d, a, k[15], 22, 1236535329);
+      a = gg(a, b, c, d, k[1], 5, -165796510);
+      d = gg(d, a, b, c, k[6], 9, -1069501632);
+      c = gg(c, d, a, b, k[11], 14, 643717713);
+      b = gg(b, c, d, a, k[0], 20, -373897302);
+      a = gg(a, b, c, d, k[5], 5, -701558691);
+      d = gg(d, a, b, c, k[10], 9, 38016083);
+      c = gg(c, d, a, b, k[15], 14, -660478335);
+      b = gg(b, c, d, a, k[4], 20, -405537848);
+      a = gg(a, b, c, d, k[9], 5, 568446438);
+      d = gg(d, a, b, c, k[14], 9, -1019803690);
+      c = gg(c, d, a, b, k[3], 14, -187363961);
+      b = gg(b, c, d, a, k[8], 20, 1163531501);
+      a = gg(a, b, c, d, k[13], 5, -1444681467);
+      d = gg(d, a, b, c, k[2], 9, -51403784);
+      c = gg(c, d, a, b, k[7], 14, 1735328473);
+      b = gg(b, c, d, a, k[12], 20, -1926607734);
+      a = hh(a, b, c, d, k[5], 4, -378558);
+      d = hh(d, a, b, c, k[8], 11, -2022574463);
+      c = hh(c, d, a, b, k[11], 16, 1839030562);
+      b = hh(b, c, d, a, k[14], 23, -35309556);
+      a = hh(a, b, c, d, k[1], 4, -1530992060);
+      d = hh(d, a, b, c, k[4], 11, 1272893353);
+      c = hh(c, d, a, b, k[7], 16, -155497632);
+      b = hh(b, c, d, a, k[10], 23, -1094730640);
+      a = hh(a, b, c, d, k[13], 4, 681279174);
+      d = hh(d, a, b, c, k[0], 11, -358537222);
+      c = hh(c, d, a, b, k[3], 16, -722521979);
+      b = hh(b, c, d, a, k[6], 23, 76029189);
+      a = hh(a, b, c, d, k[9], 4, -640364487);
+      d = hh(d, a, b, c, k[12], 11, -421815835);
+      c = hh(c, d, a, b, k[15], 16, 530742520);
+      b = hh(b, c, d, a, k[2], 23, -995338651);
+      a = ii(a, b, c, d, k[0], 6, -198630844);
+      d = ii(d, a, b, c, k[7], 10, 1126891415);
+      c = ii(c, d, a, b, k[14], 15, -1416354905);
+      b = ii(b, c, d, a, k[5], 21, -57434055);
+      a = ii(a, b, c, d, k[12], 6, 1700485571);
+      d = ii(d, a, b, c, k[3], 10, -1894986606);
+      c = ii(c, d, a, b, k[10], 15, -1051523);
+      b = ii(b, c, d, a, k[1], 21, -2054922799);
+      a = ii(a, b, c, d, k[8], 6, 1873313359);
+      d = ii(d, a, b, c, k[15], 10, -30611744);
+      c = ii(c, d, a, b, k[6], 15, -1560198380);
+      b = ii(b, c, d, a, k[13], 21, 1309151649);
+      a = ii(a, b, c, d, k[4], 6, -145523070);
+      d = ii(d, a, b, c, k[11], 10, -1120210379);
+      c = ii(c, d, a, b, k[2], 15, 718787259);
+      b = ii(b, c, d, a, k[9], 21, -343485551);
+      x[0] = (a + x[0]) | 0;
+      x[1] = (b + x[1]) | 0;
+      x[2] = (c + x[2]) | 0;
+      x[3] = (d + x[3]) | 0;
+    }
+    function rhex(n) {
+      const hex = '0123456789abcdef';
+      let s = '';
+      for (let j = 0; j < 4; j++) s += hex.charAt((n >> (j * 8 + 4)) & 0x0f) + hex.charAt((n >> (j * 8)) & 0x0f);
+      return s;
+    }
+    return md51(str)
+      .map(rhex)
+      .join('');
+  }
+
+  function genMixinKey(raw) {
+    let out = '';
+    for (let i = 0; i < MIXIN_KEY_ENC_TAB.length; i++) {
+      out += raw[MIXIN_KEY_ENC_TAB[i]];
+    }
+    return out.slice(0, 32);
+  }
+
+  async function getWbiMixinKey() {
+    if (wbiMixinKey && Date.now() - wbiMixinKeyAt < 12 * 60 * 60 * 1000) return wbiMixinKey;
+    const res = await apiFetch('https://api.bilibili.com/x/web-interface/nav');
+    const json = await res.json();
+    const img = json.data?.wbi_img?.img_url || '';
+    const sub = json.data?.wbi_img?.sub_url || '';
+    const imgKey = img.slice(img.lastIndexOf('/') + 1, img.lastIndexOf('.'));
+    const subKey = sub.slice(sub.lastIndexOf('/') + 1, sub.lastIndexOf('.'));
+    if (!imgKey || !subKey) throw new Error('WBI key unavailable');
+    wbiMixinKey = genMixinKey(imgKey + subKey);
+    wbiMixinKeyAt = Date.now();
+    return wbiMixinKey;
+  }
+
+  async function wbiGet(baseUrl, params) {
+    const mixin = await getWbiMixinKey();
+    const wts = Math.floor(Date.now() / 1000);
+    const entries = Object.entries({ ...params, wts }).sort(([a], [b]) => a.localeCompare(b));
+    const query = entries
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+      .join('&');
+    const w_rid = md5Hex(`${query}${mixin}`);
+    const url = `${baseUrl}?${query}&w_rid=${w_rid}`;
+    const res = await apiFetch(url);
+    return res.json();
+  }
+
+  function ingestHistoryItem(map, item, bvUpper, videoAid, cidToPage) {
+    const h = item.history || {};
+    const itemBvid = String(h.bvid || item.bvid || '').toUpperCase();
+    const kid = item.kid ?? h.oid;
+    const match =
+      (itemBvid && itemBvid === bvUpper) ||
+      (videoAid && (Number(kid) === Number(videoAid) || Number(h.oid) === Number(videoAid)));
+    if (!match) return false;
+
+    const progress = item.progress;
+    if (progress == null || typeof progress !== 'number') return false;
+
+    const cid = h.cid;
+    if (cid && cidToPage.has(cid)) {
+      const p = cidToPage.get(cid);
+      map.set(p, Math.max(map.get(p) ?? -1, progress));
+    }
+    const pageNum = h.page;
+    if (pageNum > 0) {
+      map.set(pageNum, Math.max(map.get(pageNum) ?? -1, progress));
+    }
+    return true;
+  }
+
   async function fetchPages(bv) {
     const url = `https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bv)}`;
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await apiFetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
     if (json.code !== 0 || !json.data) throw new Error(json.message || 'API 错误');
@@ -303,55 +537,126 @@
     };
   }
 
-  async function fetchHistoryProgressMap(bv) {
+  async function fetchHistoryProgressMap(bv, videoAid, cidToPage) {
     const map = new Map();
+    const bvUpper = bv.toUpperCase();
+    let max = 0;
     let viewAt = 0;
-    const maxRounds = 15;
+    let business = '';
+    const ps = 30;
+    let prevMax = -1;
+    let prevViewAt = -1;
 
-    for (let round = 0; round < maxRounds; round++) {
-      const url =
-        `https://api.bilibili.com/x/web-interface/history/cursor?max=30&view_at=${viewAt}&business=archive`;
-      const res = await fetch(url, { credentials: 'include' });
+    for (let round = 0; round < 25; round++) {
+      const qs = new URLSearchParams({
+        ps: String(ps),
+        max: String(max),
+        view_at: String(viewAt),
+        business: business,
+        type: 'archive',
+      });
+      const res = await apiFetch(
+        `https://api.bilibili.com/x/web-interface/history/cursor?${qs.toString()}`
+      );
       if (!res.ok) break;
       const json = await res.json();
-      if (json.code === -101) return map;
+      if (json.code === -101) return { map, loggedIn: false };
       if (json.code !== 0) break;
 
-      const list = json.data?.list || [];
+      const data = json.data || {};
+      const list = data.list || [];
       if (!list.length) break;
 
       for (const item of list) {
-        const h = item.history || item;
-        const itemBvid = h.bvid || item.bvid;
-        if (itemBvid !== bv) continue;
-        const page = h.page || item.page;
-        const progress = h.progress ?? item.progress;
-        if (!page || progress == null) continue;
-        map.set(page, Math.max(map.get(page) || 0, progress));
+        ingestHistoryItem(map, item, bvUpper, videoAid, cidToPage);
       }
 
-      if (!json.data?.has_more) break;
-      const nextViewAt = json.data?.cursor?.view_at ?? list[list.length - 1]?.view_at;
-      if (!nextViewAt || nextViewAt === viewAt) break;
+      const c = data.cursor;
+      if (!c || list.length < ps) break;
+      const nextMax = c.max ?? max;
+      const nextViewAt = c.view_at ?? viewAt;
+      if (round > 0 && nextMax === prevMax && nextViewAt === prevViewAt) break;
+      prevMax = nextMax;
+      prevViewAt = nextViewAt;
+      max = nextMax;
       viewAt = nextViewAt;
+      business = c.business ?? business;
+    }
+
+    return { map, loggedIn: true };
+  }
+
+  async function fetchV2HistoryProgressMap(bv, videoAid, cidToPage) {
+    const map = new Map();
+    const bvUpper = bv.toUpperCase();
+
+    for (let pn = 1; pn <= 40; pn++) {
+      const res = await apiFetch(
+        `https://api.bilibili.com/x/v2/history?pn=${pn}&ps=30`
+      );
+      if (!res.ok) break;
+      const json = await res.json();
+      if (json.code === -101) break;
+      if (json.code !== 0) break;
+      const list = json.data;
+      if (!Array.isArray(list) || !list.length) break;
+
+      for (const item of list) {
+        const itemBvid = String(item.bvid || '').toUpperCase();
+        if (itemBvid !== bvUpper && Number(item.aid) !== Number(videoAid)) continue;
+        const progress = item.progress;
+        if (progress == null || typeof progress !== 'number') continue;
+        const pageObj = item.page;
+        if (pageObj?.page > 0) {
+          map.set(pageObj.page, Math.max(map.get(pageObj.page) ?? -1, progress));
+        }
+        if (pageObj?.cid && cidToPage.has(pageObj.cid)) {
+          const p = cidToPage.get(pageObj.cid);
+          map.set(p, Math.max(map.get(p) ?? -1, progress));
+        }
+      }
+
+      if (list.length < 30) break;
     }
 
     return map;
   }
 
-  async function fetchCidProgress(videoAid, cid) {
-    const url =
-      `https://api.bilibili.com/x/click-interface/web/history?aid=${videoAid}&cid=${cid}`;
-    const res = await fetch(url, { credentials: 'include' });
+  async function fetchCidProgressWbi(videoAid, bv, cid) {
+    try {
+      const json = await wbiGet('https://api.bilibili.com/x/player/wbi/v2', {
+        aid: videoAid,
+        bvid: bv,
+        cid,
+      });
+      if (json.code !== 0 || !json.data) return null;
+      const d = json.data;
+      if (d.last_play_cid === cid && typeof d.last_play_time === 'number' && d.last_play_time >= 0) {
+        return d.last_play_time;
+      }
+      const prog = d.played_time ?? d.view_info?.progress ?? d.progress;
+      if (typeof prog === 'number') return prog;
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function fetchCidProgressLegacy(videoAid, cid) {
+    const res = await apiFetch(
+      `https://api.bilibili.com/x/click-interface/web/history?aid=${videoAid}&cid=${cid}`
+    );
     if (!res.ok) return null;
     const json = await res.json();
     if (json.code !== 0 || json.data == null) return null;
-    const progress = json.data.progress ?? json.data;
-    return typeof progress === 'number' ? progress : null;
+    if (typeof json.data.progress === 'number') return json.data.progress;
+    if (typeof json.data === 'number') return json.data;
+    return null;
   }
 
   async function runPool(items, limit, worker) {
     const queue = [...items];
+    if (!queue.length) return;
     const runners = Array.from({ length: Math.min(limit, queue.length) }, async () => {
       while (queue.length) {
         const item = queue.shift();
@@ -361,27 +666,50 @@
     await Promise.all(runners);
   }
 
-  async function syncFromAccount(videoAid, bv, pageList) {
-    if (!videoAid || !pageList.length) return { changed: false, foundAny: false };
+  function mergeProgressMaps(target, source) {
+    for (const [page, sec] of source) {
+      target.set(page, Math.max(target.get(page) ?? -1, sec));
+    }
+  }
 
-    const historyMap = await fetchHistoryProgressMap(bv);
-    const cidProgress = new Map();
+  async function collectAccountProgress(videoAid, bv, pageList) {
+    const cidToPage = new Map(pageList.map((p) => [p.cid, p.page]));
+    const progressMap = new Map();
 
-    const missing = pageList.filter((pg) => !historyMap.has(pg.page));
-    await runPool(missing, 4, async (pg) => {
-      const progress = await fetchCidProgress(videoAid, pg.cid);
-      if (progress != null) cidProgress.set(pg.page, progress);
+    const cursorResult = await fetchHistoryProgressMap(bv, videoAid, cidToPage);
+    if (cursorResult.loggedIn === false) {
+      return { progressMap, loggedIn: false, foundAny: false };
+    }
+    mergeProgressMaps(progressMap, cursorResult.map);
+
+    mergeProgressMaps(progressMap, await fetchV2HistoryProgressMap(bv, videoAid, cidToPage));
+
+    const needCid = pageList.filter((pg) => !progressMap.has(pg.page));
+    await runPool(needCid, 3, async (pg) => {
+      let sec =
+        (await fetchCidProgressWbi(videoAid, bv, pg.cid)) ??
+        (await fetchCidProgressLegacy(videoAid, pg.cid));
+      if (sec != null) progressMap.set(pg.page, Math.max(progressMap.get(pg.page) ?? -1, sec));
     });
 
+    return { progressMap, loggedIn: true, foundAny: progressMap.size > 0 };
+  }
+
+  async function syncFromAccount(videoAid, bv, pageList) {
+    if (!videoAid || !pageList.length) return { changed: false, foundAny: false, loggedIn: true };
+
+    const { progressMap, loggedIn, foundAny } = await collectAccountProgress(videoAid, bv, pageList);
+    if (!loggedIn) return { changed: false, foundAny: false, loggedIn: false };
+
     let changed = false;
-    let foundAny = false;
     const local = getProgress(bv);
 
     for (const pg of pageList) {
-      const progress = historyMap.has(pg.page) ? historyMap.get(pg.page) : cidProgress.get(pg.page);
+      if (isManualMark(bv, pg.page)) continue;
+
+      const progress = progressMap.get(pg.page);
       if (progress == null) continue;
 
-      foundAny = true;
       const serverSt = progressToStatus(progress, pg.duration);
       const localSt = local[String(pg.page)] || STATUS.UNWATCHED;
       const merged = pickStatus(localSt, serverSt);
@@ -392,7 +720,35 @@
     }
 
     if (changed) persistStorage();
-    return { changed, foundAny };
+    return { changed, foundAny, loggedIn: true };
+  }
+
+  async function runAccountSync() {
+    if (!aid || !bvid || pages.length <= 1) return;
+    const content = document.getElementById('bmpv-content');
+    if (content) {
+      content.className = 'bmpv-loading';
+      content.textContent = '同步账号观看记录…';
+    }
+    try {
+      const sync = await syncFromAccount(aid, bvid, pages);
+      accountSynced = sync.foundAny;
+      if (!sync.loggedIn) {
+        if (content) {
+          content.className = 'bmpv-empty';
+          content.textContent = '未登录 B 站，无法读取观看记录';
+        }
+        return;
+      }
+    } catch (err) {
+      accountSynced = false;
+      if (content) {
+        content.className = 'bmpv-empty';
+        content.textContent = `同步失败：${err.message || '未知错误'}`;
+      }
+      return;
+    }
+    renderPanel();
   }
 
   // ─── Video tracking ────────────────────────────────────────
@@ -578,7 +934,7 @@
     #bmpv-panel .bmpv-pdur { font-size: 11px; color: var(--bmpv-dim, #64748b); white-space: nowrap; }
     #bmpv-panel .bmpv-status {
       font-size: 11px; padding: 2px 6px; border-radius: 4px; border: none;
-      white-space: nowrap;
+      white-space: nowrap; position: relative; z-index: 1;
     }
     #bmpv-panel .bmpv-status.unwatched {
       background: var(--bmpv-st-unwatched-bg, #334155); color: var(--bmpv-st-unwatched-fg, #94a3b8);
@@ -743,6 +1099,7 @@
     if (!pages.length) {
       content.className = 'bmpv-empty';
       content.textContent = '暂无分P数据';
+      applyTheme();
       return;
     }
 
@@ -758,7 +1115,7 @@
     const remain = sumRemainingSeconds();
 
     content.className = 'bmpv-body';
-    const syncHint = accountSynced ? ' · 已合并账号观看记录' : '';
+    const syncHint = accountSynced ? ' · 已合并账号记录' : '';
 
     content.innerHTML = `
       <div class="bmpv-summary">
@@ -767,6 +1124,7 @@
       </div>
       <div class="bmpv-actions">
         <button type="button" class="bmpv-btn primary" id="bmpv-continue">从第一个未完成的P继续</button>
+        <button type="button" class="bmpv-btn" id="bmpv-sync">同步账号观看记录</button>
       </div>
       <div class="bmpv-list" id="bmpv-list"></div>
       <div class="bmpv-foot">
@@ -788,12 +1146,23 @@
       row.querySelector('.bmpv-ptitle').addEventListener('click', () => {
         if (pg.page !== currentPage) location.href = partUrl(pg.page);
       });
-      row.querySelector('.bmpv-status').addEventListener('click', (e) => {
-        e.stopPropagation();
-        cyclePartStatus(pg.page);
-      });
+      const statusBtn = row.querySelector('.bmpv-status');
+      statusBtn.addEventListener(
+        'click',
+        (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          cyclePartStatus(pg.page);
+        },
+        true
+      );
       list.appendChild(row);
     }
+
+    document.getElementById('bmpv-sync')?.addEventListener('click', () => {
+      runAccountSync().catch(() => {});
+    });
 
     document.getElementById('bmpv-continue')?.addEventListener('click', () => {
       const target = firstIncompletePage();
@@ -881,6 +1250,10 @@
       try {
         const sync = await syncFromAccount(aid, bvid, pages);
         accountSynced = sync.foundAny;
+        if (!sync.loggedIn && content) {
+          content.className = 'bmpv-empty';
+          content.textContent = '未登录 B 站，无法读取观看记录（可手动标记进度）';
+        }
       } catch {
         accountSynced = false;
       }
