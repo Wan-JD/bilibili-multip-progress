@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站多P课程进度助手
 // @namespace    https://github.com/Wan-JD/bilibili-multip-progress
-// @version      1.2.5
+// @version      1.2.6
 // @description  多P视频课程进度追踪：分P列表、账号进度同步、剩余时长估算、一键续看
 // @author       Wan-JD
 // @license      MIT
@@ -25,7 +25,7 @@
   const STORAGE_KEY = 'bilibili_multip_progress';
   const MANUAL_STORAGE_KEY = 'bilibili_multip_progress_manual';
   const THEME_KEY = 'bilibili_multip_progress_theme';
-  const SCRIPT_VERSION = '1.2.5';
+  const SCRIPT_VERSION = '1.2.6';
   const COMPLETE_RATIO = 0.9;
   const STATUS = { UNWATCHED: 'unwatched', IN_PROGRESS: 'in_progress', COMPLETED: 'completed' };
   const STATUS_LABEL = {
@@ -49,7 +49,6 @@
   let attachedVideo = null;
   let pollTimer = null;
   let lastHref = location.href;
-  let lastUiPointerHandledAt = 0;
   const syncedBvids = new Set();
 
   const THEME_PALETTE = {
@@ -1134,122 +1133,61 @@
     }
   }
 
-  function closestTarget(target, selector) {
-    if (!target) return null;
-    if (target.closest) return target.closest(selector);
-    return target.parentElement?.closest?.(selector) || null;
-  }
-
-  function handleUiCommand(e) {
-    const isClickFallback = e.type === 'click';
-    const isRecentPointerHandled = Date.now() - lastUiPointerHandledAt < 500;
-
-    const fab = closestTarget(e.target, '#bmpv-fab');
-    const panel = closestTarget(e.target, '#bmpv-panel');
-    if (!fab && !panel) return false;
-
-    const statusBtn = panel ? closestTarget(e.target, '.bmpv-status') : null;
-    const isSync = !!(panel && closestTarget(e.target, '#bmpv-sync'));
-    const isContinue = !!(panel && closestTarget(e.target, '#bmpv-continue'));
-    const isTheme = !!(panel && closestTarget(e.target, '#bmpv-theme-btn'));
-    const isClose = !!(panel && closestTarget(e.target, '#bmpv-close'));
-    const hasCommand = !!fab || !!statusBtn?.dataset?.page || isSync || isContinue || isTheme || isClose;
-    if (!hasCommand) return false;
-
-    if (isClickFallback && isRecentPointerHandled) {
-      e.preventDefault();
-      e.stopPropagation();
-      return true;
-    }
-
+  function stopUiEvent(e) {
     e.preventDefault();
     e.stopPropagation();
-    if (e.type === 'pointerdown') lastUiPointerHandledAt = Date.now();
-
-    if (fab) {
-      const p = document.getElementById('bmpv-panel');
-      if (!p) return true;
-      panelOpen = !panelOpen;
-      p.classList.toggle('open', panelOpen);
-      return true;
-    }
-
-    if (statusBtn?.dataset?.page) {
-      cyclePartStatus(Number(statusBtn.dataset.page));
-      return true;
-    }
-    if (isSync) {
-      runAccountSync().catch(() => {});
-      return true;
-    }
-    if (isContinue) {
-      onContinueClick();
-      return true;
-    }
-    if (isTheme) {
-      toggleTheme();
-      return true;
-    }
-    if (isClose) {
-      panelOpen = false;
-      panel.classList.remove('open');
-      return true;
-    }
-
-    return false;
   }
 
-  function bindDirectUiHandlers(root = document) {
-    const selectors = ['#bmpv-fab', '#bmpv-theme-btn', '#bmpv-close', '#bmpv-sync', '#bmpv-continue', '.bmpv-status'];
-    root.querySelectorAll?.(selectors.join(',')).forEach((el) => {
-      if (el.dataset.bmpvDirectWired === '1') return;
-      el.dataset.bmpvDirectWired = '1';
-      el.addEventListener('pointerdown', handleUiCommand, true);
-      el.addEventListener('click', handleUiCommand, true);
-    });
-    const fab = document.getElementById('bmpv-fab');
-    if (fab && fab.dataset.bmpvDirectWired !== '1') {
-      fab.dataset.bmpvDirectWired = '1';
-      fab.addEventListener('pointerdown', handleUiCommand, true);
-      fab.addEventListener('click', handleUiCommand, true);
+  function wirePanelEvents(fab, panel) {
+    if (fab && fab.dataset.bmpvFabWired !== '6') {
+      fab.dataset.bmpvFabWired = '6';
+      fab.addEventListener('click', (e) => {
+        stopUiEvent(e);
+        panelOpen = !panelOpen;
+        panel.classList.toggle('open', panelOpen);
+      });
     }
-  }
 
-  function installGlobalUiHandlers() {
-    if (window.__bmpvUiHandlersInstalled) return;
-    window.__bmpvUiHandlersInstalled = true;
+    if (panel.dataset.bmpvPanelWired !== '6') {
+      panel.dataset.bmpvPanelWired = '6';
 
-    document.addEventListener(
-      'pointerdown',
-      handleUiCommand,
-      true
-    );
+      const themeBtn = panel.querySelector('#bmpv-theme-btn');
+      if (themeBtn) {
+        themeBtn.replaceWith(themeBtn.cloneNode(true));
+        panel.querySelector('#bmpv-theme-btn')?.addEventListener('click', (e) => {
+          stopUiEvent(e);
+          toggleTheme();
+        });
+      }
 
-    document.addEventListener(
-      'click',
-      handleUiCommand,
-      true
-    );
+      const closeBtn = panel.querySelector('#bmpv-close');
+      if (closeBtn) {
+        closeBtn.replaceWith(closeBtn.cloneNode(true));
+        panel.querySelector('#bmpv-close')?.addEventListener('click', (e) => {
+          stopUiEvent(e);
+          panelOpen = false;
+          panel.classList.remove('open');
+        });
+      }
+    }
 
-    document.addEventListener(
-      'wheel',
-      (e) => {
-        const list = e.target.closest('#bmpv-panel .bmpv-list');
-        if (!list) return;
-        const { scrollTop, scrollHeight, clientHeight } = list;
-        const delta = e.deltaY;
-        const atTop = scrollTop <= 0;
-        const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
-        if ((delta < 0 && atTop) || (delta > 0 && atBottom)) return;
-        e.stopPropagation();
-      },
-      { passive: true, capture: true }
-    );
-  }
-
-  function wirePanelEvents() {
-    installGlobalUiHandlers();
-    bindDirectUiHandlers();
+    if (!window.__bmpvWheelHandlersInstalled) {
+      window.__bmpvWheelHandlersInstalled = true;
+      document.addEventListener(
+        'wheel',
+        (e) => {
+          const list = e.target.closest('#bmpv-panel .bmpv-list');
+          if (!list) return;
+          const { scrollTop, scrollHeight, clientHeight } = list;
+          const delta = e.deltaY;
+          const atTop = scrollTop <= 0;
+          const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
+          if ((delta < 0 && atTop) || (delta > 0 && atBottom)) return;
+          e.stopPropagation();
+        },
+        { passive: true, capture: true }
+      );
+    }
   }
 
   function ensureUI() {
@@ -1282,7 +1220,7 @@
       upgradePanelHeader(panel);
     }
 
-    wirePanelEvents();
+    wirePanelEvents(fab, panel);
     applyTheme();
   }
 
@@ -1357,6 +1295,15 @@
       </div>
     `;
 
+    document.getElementById('bmpv-continue')?.addEventListener('click', (e) => {
+      stopUiEvent(e);
+      onContinueClick();
+    });
+    document.getElementById('bmpv-sync')?.addEventListener('click', (e) => {
+      stopUiEvent(e);
+      runAccountSync().catch(() => {});
+    });
+
     const list = document.getElementById('bmpv-list');
     for (const pg of pages) {
       const st = getPartStatus(bvid, pg.page);
@@ -1371,12 +1318,15 @@
       row.querySelector('.bmpv-ptitle').addEventListener('click', () => {
         if (pg.page !== currentPage) location.href = partUrl(pg.page);
       });
+      row.querySelector('.bmpv-status').addEventListener('click', (e) => {
+        stopUiEvent(e);
+        cyclePartStatus(pg.page);
+      });
       list.appendChild(row);
     }
 
     updateFabBadge();
     applyTheme();
-    bindDirectUiHandlers(content);
   }
 
   function escapeHtml(str) {
@@ -1481,7 +1431,6 @@
   }
 
   function bootstrap() {
-    installGlobalUiHandlers();
     const start = () => {
       init().catch(() => {});
       watchNavigation();
