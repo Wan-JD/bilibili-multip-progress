@@ -638,8 +638,11 @@
       });
     }
 
-    if (!panel.dataset.bmpvPanelWired) {
-      panel.dataset.bmpvPanelWired = '1';
+    if (panel.dataset.bmpvPanelWired !== '2') {
+      panel.dataset.bmpvPanelWired = '2';
+
+      const themeBtn = panel.querySelector('#bmpv-theme-btn');
+      if (themeBtn) themeBtn.replaceWith(themeBtn.cloneNode(true));
 
       panel.addEventListener(
         'click',
