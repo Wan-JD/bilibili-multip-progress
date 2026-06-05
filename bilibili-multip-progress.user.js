@@ -33,7 +33,6 @@
     [STATUS.IN_PROGRESS]: '进行中',
     [STATUS.COMPLETED]: '已完成',
   };
-  const STATUS_CYCLE = [STATUS.UNWATCHED, STATUS.IN_PROGRESS, STATUS.COMPLETED];
   let storageCache = null;
   let manualCache = null;
   let uiTheme = 'dark';
@@ -165,9 +164,18 @@
     return storageCache;
   }
 
+  function persistValue(key, value) {
+    try {
+      const result = GM_setValue(key, value);
+      if (result && typeof result.catch === 'function') result.catch(() => {});
+    } catch {
+      // Ignore storage write errors so UI interaction can still update immediately.
+    }
+  }
+
   function persistStorage() {
-    GM_setValue(STORAGE_KEY, storageCache).catch(() => {});
-    GM_setValue(MANUAL_STORAGE_KEY, manualCache).catch(() => {});
+    persistValue(STORAGE_KEY, storageCache);
+    persistValue(MANUAL_STORAGE_KEY, manualCache);
   }
 
   function isManualMark(bv, pageNum) {
@@ -191,7 +199,7 @@
 
   function setTheme(theme) {
     uiTheme = theme === 'light' ? 'light' : 'dark';
-    GM_setValue(THEME_KEY, uiTheme).catch(() => {});
+    persistValue(THEME_KEY, uiTheme);
     applyTheme();
   }
 
@@ -319,8 +327,7 @@
     if (!bvid) return;
     const run = () => {
       const cur = getPartStatus(bvid, pageNum);
-      const idx = STATUS_CYCLE.indexOf(cur);
-      const next = STATUS_CYCLE[(idx >= 0 ? idx + 1 : 0) % STATUS_CYCLE.length];
+      const next = cur === STATUS.COMPLETED ? STATUS.UNWATCHED : STATUS.COMPLETED;
       setPartStatus(bvid, pageNum, next, true, true);
     };
     if (!storageCache) {
