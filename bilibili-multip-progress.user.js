@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站多P课程进度助手
 // @namespace    https://github.com/Wan-JD/bilibili-multip-progress
-// @version      1.0.1
+// @version      1.0.2
 // @description  多P视频课程进度追踪：分P列表、完成状态、剩余时长估算、一键续看
 // @author       Wan-JD
 // @license      MIT
@@ -284,8 +284,28 @@
     }
     .bmpv-list {
       flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
-      padding: 6px 8px 10px; overscroll-behavior: contain;
+      padding: 6px 6px 10px 8px; overscroll-behavior: contain;
       -webkit-overflow-scrolling: touch;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(51, 65, 85, 0.55) transparent;
+    }
+    .bmpv-list::-webkit-scrollbar {
+      width: 3px;
+    }
+    .bmpv-list::-webkit-scrollbar-track {
+      background: transparent;
+      margin: 4px 0;
+    }
+    .bmpv-list::-webkit-scrollbar-thumb {
+      background: rgba(51, 65, 85, 0.45);
+      border-radius: 999px;
+      transition: background 0.2s ease;
+    }
+    .bmpv-list:hover::-webkit-scrollbar-thumb {
+      background: rgba(71, 85, 105, 0.7);
+    }
+    .bmpv-list::-webkit-scrollbar-thumb:active {
+      background: rgba(100, 116, 139, 0.85);
     }
     .bmpv-row {
       display: grid; grid-template-columns: 36px 1fr auto auto;
