@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         B站多P课程进度助手
 // @namespace    https://github.com/Wan-JD/bilibili-multip-progress
-// @version      1.0.2
-// @description  多P视频课程进度追踪：分P列表、完成状态、剩余时长估算、一键续看
+// @version      1.1.0
+// @description  多P视频课程进度追踪：分P列表、账号进度同步、剩余时长估算、一键续看
 // @author       Wan-JD
 // @license      MIT
 // @homepageURL  https://github.com/Wan-JD/bilibili-multip-progress
@@ -14,6 +14,8 @@
 // @match        *://www.bilibili.com/list/*
 // @connect      api.bilibili.com
 // @grant        GM_addStyle
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -29,34 +31,64 @@
     [STATUS.COMPLETED]: '已完成',
   };
   const STATUS_CYCLE = [STATUS.UNWATCHED, STATUS.IN_PROGRESS, STATUS.COMPLETED];
+  const STATUS_RANK = {
+    [STATUS.UNWATCHED]: 0,
+    [STATUS.IN_PROGRESS]: 1,
+    [STATUS.COMPLETED]: 2,
+  };
 
+  let storageCache = null;
   let bvid = null;
+  let aid = null;
   let pages = [];
   let currentPage = 1;
   let panelOpen = false;
+  let accountSynced = false;
   let videoObserver = null;
   let attachedVideo = null;
   let pollTimer = null;
   let lastHref = location.href;
+  const syncedBvids = new Set();
 
-  // ─── Storage ───────────────────────────────────────────────
+  // ─── Storage (Tampermonkey; survives clearing B站 site data) ─
 
-  function loadAll() {
-    try {
-      return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    } catch {
-      return {};
+  async function ensureStorage() {
+    if (storageCache) return storageCache;
+
+    let data = await GM_getValue(STORAGE_KEY, null);
+    if (typeof data === 'string') {
+      try {
+        data = JSON.parse(data);
+      } catch {
+        data = null;
+      }
     }
+    if (!data || typeof data !== 'object') {
+      data = {};
+      try {
+        const legacy = localStorage.getItem(STORAGE_KEY);
+        if (legacy) {
+          data = JSON.parse(legacy);
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch {
+        data = {};
+      }
+    }
+
+    storageCache = data;
+    await GM_setValue(STORAGE_KEY, storageCache);
+    return storageCache;
   }
 
-  function saveAll(data) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  function persistStorage() {
+    GM_setValue(STORAGE_KEY, storageCache).catch(() => {});
   }
 
   function getProgress(bv) {
-    const all = loadAll();
-    if (!all[bv]) all[bv] = {};
-    return all[bv];
+    if (!storageCache) storageCache = {};
+    if (!storageCache[bv]) storageCache[bv] = {};
+    return storageCache[bv];
   }
 
   function getPartStatus(bv, pageNum) {
@@ -64,12 +96,22 @@
   }
 
   function setPartStatus(bv, pageNum, status) {
-    const all = loadAll();
-    if (!all[bv]) all[bv] = {};
-    all[bv][String(pageNum)] = status;
-    saveAll(all);
+    getProgress(bv)[String(pageNum)] = status;
+    persistStorage();
     renderPanel();
     updateFabBadge();
+  }
+
+  function pickStatus(a, b) {
+    return STATUS_RANK[a] >= STATUS_RANK[b] ? a : b;
+  }
+
+  function progressToStatus(progress, duration) {
+    if (progress == null) return STATUS.UNWATCHED;
+    if (progress === -1) return STATUS.COMPLETED;
+    if (duration > 0 && progress >= duration * COMPLETE_RATIO) return STATUS.COMPLETED;
+    if (progress > 3) return STATUS.IN_PROGRESS;
+    return STATUS.UNWATCHED;
   }
 
   function cyclePartStatus(pageNum) {
@@ -146,12 +188,107 @@
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
     if (json.code !== 0 || !json.data) throw new Error(json.message || 'API 错误');
-    return (json.data.pages || []).map((p) => ({
-      page: p.page,
-      cid: p.cid,
-      title: p.part || p.title || `P${p.page}`,
-      duration: p.duration || 0,
-    }));
+    return {
+      aid: json.data.aid,
+      pages: (json.data.pages || []).map((p) => ({
+        page: p.page,
+        cid: p.cid,
+        title: p.part || p.title || `P${p.page}`,
+        duration: p.duration || 0,
+      })),
+    };
+  }
+
+  async function fetchHistoryProgressMap(bv) {
+    const map = new Map();
+    let viewAt = 0;
+    const maxRounds = 15;
+
+    for (let round = 0; round < maxRounds; round++) {
+      const url =
+        `https://api.bilibili.com/x/web-interface/history/cursor?max=30&view_at=${viewAt}&business=archive`;
+      const res = await fetch(url, { credentials: 'include' });
+      if (!res.ok) break;
+      const json = await res.json();
+      if (json.code === -101) return map;
+      if (json.code !== 0) break;
+
+      const list = json.data?.list || [];
+      if (!list.length) break;
+
+      for (const item of list) {
+        const h = item.history || item;
+        const itemBvid = h.bvid || item.bvid;
+        if (itemBvid !== bv) continue;
+        const page = h.page || item.page;
+        const progress = h.progress ?? item.progress;
+        if (!page || progress == null) continue;
+        map.set(page, Math.max(map.get(page) || 0, progress));
+      }
+
+      if (!json.data?.has_more) break;
+      const nextViewAt = json.data?.cursor?.view_at ?? list[list.length - 1]?.view_at;
+      if (!nextViewAt || nextViewAt === viewAt) break;
+      viewAt = nextViewAt;
+    }
+
+    return map;
+  }
+
+  async function fetchCidProgress(videoAid, cid) {
+    const url =
+      `https://api.bilibili.com/x/click-interface/web/history?aid=${videoAid}&cid=${cid}`;
+    const res = await fetch(url, { credentials: 'include' });
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (json.code !== 0 || json.data == null) return null;
+    const progress = json.data.progress ?? json.data;
+    return typeof progress === 'number' ? progress : null;
+  }
+
+  async function runPool(items, limit, worker) {
+    const queue = [...items];
+    const runners = Array.from({ length: Math.min(limit, queue.length) }, async () => {
+      while (queue.length) {
+        const item = queue.shift();
+        await worker(item);
+      }
+    });
+    await Promise.all(runners);
+  }
+
+  async function syncFromAccount(videoAid, bv, pageList) {
+    if (!videoAid || !pageList.length) return { changed: false, foundAny: false };
+
+    const historyMap = await fetchHistoryProgressMap(bv);
+    const cidProgress = new Map();
+
+    const missing = pageList.filter((pg) => !historyMap.has(pg.page));
+    await runPool(missing, 4, async (pg) => {
+      const progress = await fetchCidProgress(videoAid, pg.cid);
+      if (progress != null) cidProgress.set(pg.page, progress);
+    });
+
+    let changed = false;
+    let foundAny = false;
+    const local = getProgress(bv);
+
+    for (const pg of pageList) {
+      const progress = historyMap.has(pg.page) ? historyMap.get(pg.page) : cidProgress.get(pg.page);
+      if (progress == null) continue;
+
+      foundAny = true;
+      const serverSt = progressToStatus(progress, pg.duration);
+      const localSt = local[String(pg.page)] || STATUS.UNWATCHED;
+      const merged = pickStatus(localSt, serverSt);
+      if (merged !== localSt) {
+        local[String(pg.page)] = merged;
+        changed = true;
+      }
+    }
+
+    if (changed) persistStorage();
+    return { changed, foundAny };
   }
 
   // ─── Video tracking ────────────────────────────────────────
@@ -422,10 +559,12 @@
     const remain = sumRemainingSeconds();
 
     content.className = 'bmpv-body';
+    const syncHint = accountSynced ? ' · 已合并账号观看记录' : '';
+
     content.innerHTML = `
       <div class="bmpv-summary">
         共 <strong>${pages.length}</strong> P · 已完成 <strong>${done}</strong> ·
-        预计剩余 <strong>${formatDuration(remain)}</strong>
+        预计剩余 <strong>${formatDuration(remain)}</strong>${syncHint}
       </div>
       <div class="bmpv-actions">
         <button type="button" class="bmpv-btn primary" id="bmpv-continue">从第一个未完成的P继续</button>
@@ -485,6 +624,8 @@
   // ─── Init / SPA navigation ─────────────────────────────────
 
   async function init() {
+    await ensureStorage();
+
     const bv = extractBvid();
     if (!bv) {
       hideUI();
@@ -501,6 +642,8 @@
 
     lastHref = location.href;
     bvid = bv;
+    aid = null;
+    accountSynced = false;
     currentPage = getCurrentPageFromUrl();
     pages = [];
 
@@ -512,7 +655,9 @@
     }
 
     try {
-      pages = await fetchPages(bvid);
+      const meta = await fetchPages(bvid);
+      aid = meta.aid;
+      pages = meta.pages;
     } catch (err) {
       if (content) {
         content.className = 'bmpv-empty';
@@ -527,6 +672,17 @@
       document.getElementById('bmpv-fab').style.opacity = '0.55';
       stopVideoWatch();
       return;
+    }
+
+    if (!syncedBvids.has(bvid)) {
+      if (content) content.textContent = '同步账号观看记录…';
+      try {
+        const sync = await syncFromAccount(aid, bvid, pages);
+        accountSynced = sync.foundAny;
+      } catch {
+        accountSynced = false;
+      }
+      syncedBvids.add(bvid);
     }
 
     document.getElementById('bmpv-fab').style.opacity = '1';
@@ -553,14 +709,14 @@
   }
 
   function bootstrap() {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => {
-        init();
-        watchNavigation();
-      });
-    } else {
-      init();
+    const start = () => {
+      init().catch(() => {});
       watchNavigation();
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', start, { once: true });
+    } else {
+      start();
     }
   }
 
